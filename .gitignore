@@ -1,0 +1,20 @@
+.gradle/
+build/
+*/build/
+.idea/
+*.iml
+local.properties
+
+# Modèles IA
+*.onnx
+*.onnx.data
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# Audio généré
+*.wav
+
+# Logs
+*.log

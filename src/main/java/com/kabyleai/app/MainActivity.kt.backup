@@ -1,0 +1,233 @@
+package com.kabyleai.app
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import java.io.File
+
+class MainActivity : ComponentActivity() {
+
+    private var recorder: MediaRecorder? = null
+    private var audioFile: File? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        setContent {
+            KabyleAIApp(
+                startRecording = { startRecording() },
+                stopRecording = { stopRecording() }
+            )
+        }
+    }
+
+    private fun startRecording() {
+        val file = File(cacheDir, "kabyle_input.m4a")
+        audioFile = file
+
+        recorder = MediaRecorder(this).apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(file.absolutePath)
+            prepare()
+            start()
+        }
+    }
+
+    private fun stopRecording(): File? {
+        recorder?.runCatching {
+            stop()
+            release()
+        }
+
+        recorder = null
+        return audioFile
+    }
+
+    override fun onDestroy() {
+        recorder?.runCatching {
+            stop()
+            release()
+        }
+        recorder = null
+        super.onDestroy()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun KabyleAIApp(
+    startRecording: () -> Unit,
+    stopRecording: () -> File?
+) {
+    val context = LocalContext.current
+
+    var text by remember {
+        mutableStateOf("Hemleɣ-k aṭas")
+    }
+
+    var transcription by remember {
+        mutableStateOf("")
+    }
+
+    var recording by remember {
+        mutableStateOf(false)
+    }
+
+    var status by remember {
+        mutableStateOf("Prêt")
+    }
+
+    val permissionLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            status = if (granted) {
+                "Microphone autorisé"
+            } else {
+                "Permission microphone refusée"
+            }
+        }
+
+    MaterialTheme {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text("Kabyle AI")
+                    }
+                )
+            }
+        ) { padding ->
+
+            Column(
+                modifier = Modifier
+                    .padding(padding)
+                    .padding(20.dp)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+
+                Text(
+                    text = "Kabyle → Audio",
+                    style = MaterialTheme.typography.titleLarge
+                )
+
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    label = {
+                        Text("Texte kabyle")
+                    }
+                )
+
+                Button(
+                    onClick = {
+                        status = "TTS kabyle : moteur local à connecter"
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Lire en kabyle")
+                }
+
+                HorizontalDivider()
+
+                Text(
+                    text = "Audio → Kabyle",
+                    style = MaterialTheme.typography.titleLarge
+                )
+
+                Button(
+                    onClick = {
+
+                        val permission =
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.RECORD_AUDIO
+                            )
+
+                        if (permission != PackageManager.PERMISSION_GRANTED) {
+
+                            permissionLauncher.launch(
+                                Manifest.permission.RECORD_AUDIO
+                            )
+
+                        } else {
+
+                            if (!recording) {
+
+                                startRecording()
+
+                                recording = true
+                                status = "Enregistrement..."
+
+                            } else {
+
+                                stopRecording()
+
+                                recording = false
+
+                                status =
+                                    "Audio enregistré. STT kabyle local à connecter."
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (recording) {
+                            "Arrêter"
+                        } else {
+                            "Parler en kabyle"
+                        }
+                    )
+                }
+
+                OutlinedTextField(
+                    value = transcription,
+                    onValueChange = {
+                        transcription = it
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    label = {
+                        Text("Texte reconnu")
+                    }
+                )
+
+                Text(
+                    text = "État : $status",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text =
+                        "Moteurs prévus : Matoub-82M (TTS) et Fadhma-300M (STT).",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
