@@ -69,8 +69,7 @@ class MainActivity : ComponentActivity() {
                 },
                 stopRecording = {
                     stopRecording()
-                },
-                matoubTts = MatoubTts(this)
+                }
             )
         }
     }
@@ -479,8 +478,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun KabyleAIApp(
     startRecording: () -> Boolean,
-    stopRecording: () -> File?,
-    matoubTts: MatoubTts
+    stopRecording: () -> File?
 ) {
 
     val context = LocalContext.current
@@ -570,29 +568,8 @@ fun KabyleAIApp(
 
                     onClick = {
 
-                        status = "Synthèse vocale en cours..."
-
-                        matoubTts.synthesize(
-                            text = text,
-
-                            onSuccess = { file ->
-                                android.os.Handler(
-                                    android.os.Looper.getMainLooper()
-                                ).post {
-                                    status = "Lecture en cours..."
-                                    matoubTts.play(file)
-                                }
-                            },
-
-                            onError = { error ->
-                                android.os.Handler(
-                                    android.os.Looper.getMainLooper()
-                                ).post {
-                                    status =
-                                        "Erreur TTS : ${error.message}"
-                                }
-                            }
-                        )
+                        status =
+                            "TTS kabyle : moteur local à connecter"
                     },
 
                     modifier =
@@ -668,31 +645,12 @@ fun KabyleAIApp(
                                         onResult = { result ->
                                             transcription = result
 
-                                            if (result.isNotBlank()) {
-                                                status = "Synthèse vocale en cours..."
-
-                                                matoubTts.synthesize(
-                                                    text = result,
-                                                    onSuccess = { file ->
-                                                        android.os.Handler(
-                                                            android.os.Looper.getMainLooper()
-                                                        ).post {
-                                                            status = "Lecture en cours..."
-                                                            matoubTts.play(file)
-                                                        }
-                                                    },
-                                                    onError = { error ->
-                                                        android.os.Handler(
-                                                            android.os.Looper.getMainLooper()
-                                                        ).post {
-                                                            status =
-                                                                "Erreur TTS : ${error.message}"
-                                                        }
-                                                    }
-                                                )
-                                            } else {
-                                                status = "Aucun texte reconnu"
-                                            }
+                                            status =
+                                                if (result.isNotBlank()) {
+                                                    "Transcription terminée"
+                                                } else {
+                                                    "Aucun texte reconnu"
+                                                }
                                         },
                                         onError = { error ->
                                             status =

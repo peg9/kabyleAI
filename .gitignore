@@ -18,3 +18,53 @@ local.properties
 
 # Logs
 *.log
+
+# --- Fichiers locaux et sensibles ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+local.properties
+credentials.json
+secrets.json
+
+# --- Android / Gradle ---
+.gradle/
+build/
+**/build/
+local/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# --- Modèles volumineux ---
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.onnx.data
+*.tflite
+
+# --- APK et archives générées ---
+*.apk
+*.aab
+*.zip
+*.tar
+*.tar.gz
+
+# --- Logs ---
+*.log
