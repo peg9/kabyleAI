@@ -35,6 +35,7 @@ fi
 # Ajouter les exclusions sans écraser le .gitignore existant
 touch .gitignore
 
+if ! grep -qF -- '# --- Fichiers locaux et sensibles ---' .gitignore; then
 cat >> .gitignore <<'IGNORE'
 
 # --- Fichiers locaux et sensibles ---
@@ -87,6 +88,7 @@ venv/
 # --- Logs ---
 *.log
 IGNORE
+fi
 
 echo
 echo "Fichiers exclus selon .gitignore."
