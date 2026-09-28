@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtException
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import org.json.JSONObject
@@ -17,8 +18,11 @@ class MatoubTts(private val context: Context) {
         private const val VOCAB_PATH = "matoub/vocab.json"
 
         private const val SAMPLE_RATE = 24000
-        private const val EXPECTED_TOKENS = 36
-        private const val EXPECTED_SAMPLES = 96600
+
+        // Bornes de l'export dynamique (export_matoub_dynamic.py) :
+        // au moins les deux "$" de début et de fin, au plus 510 tokens.
+        private const val MIN_TOKENS = 2
+        private const val MAX_TOKENS = 510
     }
 
     private val environment: OrtEnvironment =
@@ -82,11 +86,16 @@ class MatoubTts(private val context: Context) {
             try {
                 val ids = tokenizer.encode(text)
 
-                if (ids.size != EXPECTED_TOKENS) {
+                if (ids.size <= MIN_TOKENS) {
                     throw IllegalArgumentException(
-                        "Ce modèle ONNX attend exactement " +
-                        "$EXPECTED_TOKENS tokens. " +
-                        "Le texte produit ${ids.size} tokens."
+                        "Texte vide : rien à synthétiser."
+                    )
+                }
+
+                if (ids.size > MAX_TOKENS) {
+                    throw IllegalArgumentException(
+                        "Texte trop long : ${ids.size} tokens, " +
+                        "maximum $MAX_TOKENS. Découpez-le en phrases."
                     )
                 }
 
@@ -103,30 +112,20 @@ class MatoubTts(private val context: Context) {
                         "input_ids" to tensor
                     )
 
-                    sess.run(inputs).use { result ->
+                    runModel(sess, inputs, ids.size).use { result ->
 
-                        val value = result[0].value
+                        val waveform = flatten(result[0].value)
 
-                        val waveform = when (value) {
-                            is FloatArray -> value
-                            is Array<*> -> {
-                                @Suppress("UNCHECKED_CAST")
-                                val array = value as Array<FloatArray>
-                                array[0]
-                            }
-                            else -> {
-                                throw IllegalStateException(
-                                    "Sortie ONNX inattendue : " +
-                                    value?.javaClass?.name
-                                )
-                            }
+                        if (waveform.isEmpty()) {
+                            throw IllegalStateException(
+                                "Le modèle n'a produit aucun échantillon."
+                            )
                         }
 
-                        if (waveform.size != EXPECTED_SAMPLES) {
+                        if (waveform.any { !it.isFinite() }) {
                             throw IllegalStateException(
-                                "Nombre d'échantillons inattendu : " +
-                                "${waveform.size}, attendu " +
-                                "$EXPECTED_SAMPLES"
+                                "Le modèle a produit des valeurs " +
+                                "non finies (NaN ou infini)."
                             )
                         }
 
@@ -150,6 +149,40 @@ class MatoubTts(private val context: Context) {
             }
         }.start()
     }
+
+    private fun runModel(
+        sess: OrtSession,
+        inputs: Map<String, OnnxTensor>,
+        tokenCount: Int
+    ): OrtSession.Result {
+        try {
+            return sess.run(inputs)
+        } catch (e: OrtException) {
+            // Un modèle exporté avec une taille figée refuse toute
+            // autre longueur avec "Got invalid dimensions".
+            if (e.message?.contains("invalid dimensions") == true) {
+                throw IllegalStateException(
+                    "Le modèle installé a une taille d'entrée figée " +
+                    "et refuse $tokenCount tokens. Installez le " +
+                    "modèle exporté en dynamique.",
+                    e
+                )
+            }
+            throw e
+        }
+    }
+
+    // La sortie "waveform" est [batch, samples] ou [batch, 1, samples]
+    // selon l'export ; on garde le premier élément du batch.
+    private fun flatten(value: Any?): FloatArray =
+        when (value) {
+            is FloatArray -> value
+            is Array<*> -> flatten(value.firstOrNull())
+            else -> throw IllegalStateException(
+                "Sortie ONNX inattendue : " +
+                value?.javaClass?.name
+            )
+        }
 
     fun play(file: File) {
         stop()
