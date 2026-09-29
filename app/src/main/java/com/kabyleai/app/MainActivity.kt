@@ -20,7 +20,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -70,7 +72,8 @@ class MainActivity : ComponentActivity() {
                 stopRecording = {
                     stopRecording()
                 },
-                matoubTts = MatoubTts(this)
+                matoubTts = MatoubTts(this),
+                translator = NllbTranslator(File(filesDir, "nllb"))
             )
         }
     }
@@ -480,10 +483,27 @@ class MainActivity : ComponentActivity() {
 fun KabyleAIApp(
     startRecording: () -> Boolean,
     stopRecording: () -> File?,
-    matoubTts: MatoubTts
+    matoubTts: MatoubTts,
+    translator: NllbTranslator
 ) {
 
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val mainHandler = remember {
+        android.os.Handler(android.os.Looper.getMainLooper())
+    }
+
+    var french by remember {
+        mutableStateOf("")
+    }
+
+    var translation by remember {
+        mutableStateOf("")
+    }
+
+    var translating by remember {
+        mutableStateOf(false)
+    }
 
     var text by remember {
         mutableStateOf("Hemleɣ-k aṭas")
@@ -542,6 +562,187 @@ fun KabyleAIApp(
                 verticalArrangement =
                     Arrangement.spacedBy(14.dp)
             ) {
+
+                Text(
+                    text = "Français → Kabyle",
+                    style =
+                        MaterialTheme.typography.titleLarge
+                )
+
+                OutlinedTextField(
+                    value = french,
+
+                    onValueChange = {
+                        french = it
+                    },
+
+                    modifier =
+                        Modifier.fillMaxWidth(),
+
+                    minLines = 3,
+
+                    label = {
+                        Text("Texte français")
+                    }
+                )
+
+                Button(
+
+                    enabled = !translating,
+
+                    onClick = {
+
+                        val input = french
+
+                        if (input.isBlank()) {
+
+                            status = "Écrivez d'abord un texte français"
+
+                        } else if (!translator.isInstalled()) {
+
+                            status =
+                                "Modèle de traduction absent : installez-le avec build_install.sh"
+
+                        } else {
+
+                            translating = true
+                            status = "Traduction en cours..."
+
+                            thread {
+
+                                val started = System.currentTimeMillis()
+
+                                try {
+
+                                    val result = translator.translate(input)
+                                    val seconds =
+                                        (System.currentTimeMillis() - started) / 1000
+
+                                    mainHandler.post {
+                                        translation = result
+                                        translating = false
+                                        status =
+                                            "Traduction terminée ($seconds s)"
+                                    }
+
+                                } catch (e: Throwable) {
+
+                                    mainHandler.post {
+                                        translating = false
+                                        status =
+                                            "Erreur traduction : ${e.message}"
+                                    }
+                                }
+                            }
+                        }
+                    },
+
+                    modifier =
+                        Modifier.fillMaxWidth()
+                ) {
+
+                    Text(
+                        if (translating) {
+                            "Traduction en cours..."
+                        } else {
+                            "Traduire en kabyle"
+                        }
+                    )
+                }
+
+                OutlinedTextField(
+                    value = translation,
+
+                    onValueChange = {
+                        translation = it
+                    },
+
+                    modifier =
+                        Modifier.fillMaxWidth(),
+
+                    minLines = 3,
+
+                    label = {
+                        Text("Traduction kabyle (à relire)")
+                    }
+                )
+
+                Row(
+                    horizontalArrangement =
+                        Arrangement.spacedBy(10.dp),
+                    modifier =
+                        Modifier.fillMaxWidth()
+                ) {
+
+                    Button(
+
+                        onClick = {
+
+                            if (translation.isBlank()) {
+
+                                status = "Rien à lire : traduisez d'abord"
+
+                            } else {
+
+                                status = "Synthèse vocale en cours..."
+
+                                matoubTts.synthesize(
+                                    text = translation,
+
+                                    onSuccess = { file ->
+                                        mainHandler.post {
+                                            status = "Lecture en cours..."
+                                            matoubTts.play(file)
+                                        }
+                                    },
+
+                                    onError = { error ->
+                                        mainHandler.post {
+                                            status =
+                                                "Erreur TTS : ${error.message}"
+                                        }
+                                    }
+                                )
+                            }
+                        },
+
+                        modifier =
+                            Modifier.weight(1f)
+                    ) {
+
+                        Text("Lire")
+                    }
+
+                    OutlinedButton(
+
+                        onClick = {
+
+                            if (translation.isNotBlank()) {
+                                clipboard.setText(
+                                    AnnotatedString(translation)
+                                )
+                                status = "Traduction copiée"
+                            }
+                        },
+
+                        modifier =
+                            Modifier.weight(1f)
+                    ) {
+
+                        Text("Copier")
+                    }
+                }
+
+                Text(
+                    text =
+                        "Traduction automatique (NLLB-200) : la qualité " +
+                        "du kabyle est inégale, à relire avant usage.",
+
+                    style =
+                        MaterialTheme.typography.bodySmall
+                )
+
+                HorizontalDivider()
 
                 Text(
                     text = "Kabyle → Audio",
