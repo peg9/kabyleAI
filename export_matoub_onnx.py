@@ -120,6 +120,64 @@ class RealSTFT(nn.Module):
         return audio[:, :, pad:-pad]
 
 
+class ExportLSTM(nn.Module):
+    """nn.LSTM bidirectionnel (batch_first, une couche) exporté comme
+    opérateur ONNX LSTM.
+
+    Sinon torch.export décompose le LSTM avec la longueur de l'exemple et
+    fige toutes les tailles calculées ensuite (interpolations de SineGen,
+    indices d'échantillonnage) : le modèle exporté ne marche plus que pour
+    cette longueur. En calcul normal, le LSTM d'origine est utilisé.
+    """
+
+    def __init__(self, lstm: nn.LSTM) -> None:
+        super().__init__()
+        self.lstm = lstm
+        hidden = lstm.hidden_size
+        self.hidden = hidden
+
+        # PyTorch ordonne les portes i, f, g, o ; ONNX i, o, f, g.
+        order = torch.cat([
+            torch.arange(0, hidden),
+            torch.arange(3 * hidden, 4 * hidden),
+            torch.arange(hidden, 2 * hidden),
+            torch.arange(2 * hidden, 3 * hidden),
+        ])
+
+        def direction(suffix):
+            w = getattr(lstm, "weight_ih_l0" + suffix).detach()[order]
+            r = getattr(lstm, "weight_hh_l0" + suffix).detach()[order]
+            b = torch.cat([
+                getattr(lstm, "bias_ih_l0" + suffix).detach()[order],
+                getattr(lstm, "bias_hh_l0" + suffix).detach()[order],
+            ])
+            return w, r, b
+
+        (wf, rf, bf), (wb, rb, bb) = direction(""), direction("_reverse")
+        self.register_buffer("onnx_w", torch.stack([wf, wb]), persistent=False)
+        self.register_buffer("onnx_r", torch.stack([rf, rb]), persistent=False)
+        self.register_buffer("onnx_b", torch.stack([bf, bb]), persistent=False)
+
+    def forward(self, x, hx=None):
+        if hx is not None or not (
+            torch.compiler.is_exporting() or torch.onnx.is_in_onnx_export()
+        ):
+            return self.lstm(x, hx)
+
+        # ONNX Runtime ne gère que layout=0 : [séquence, batch, entrée] en
+        # entrée, [séquence, directions, batch, cachée] en sortie.
+        batch, steps = x.shape[0], x.shape[1]
+        y = torch.onnx.ops.symbolic(
+            "::LSTM",
+            (x.transpose(0, 1), self.onnx_w, self.onnx_r, self.onnx_b),
+            {"hidden_size": self.hidden, "direction": "bidirectional"},
+            dtype=x.dtype,
+            shape=(steps, 2, batch, self.hidden),
+        )
+        y = y.permute(2, 0, 1, 3).reshape(batch, steps, 2 * self.hidden)
+        return y, None
+
+
 class Front(nn.Module):
     """Début de MatoubForTextToWaveform._synthesise (speed=1) : encodage du
     texte et durées prédites."""
@@ -282,6 +340,33 @@ try:
 
     if replaced == 0:
         raise RuntimeError("Aucun module TorchSTFT trouvé")
+except Exception:
+    fail(3)
+
+
+step("REMPLACEMENT DES LSTM")
+
+try:
+    count = 0
+    for name, module in list(model.named_modules()):
+        if not isinstance(module, nn.LSTM):
+            continue
+        if not (
+            module.bidirectional
+            and module.batch_first
+            and module.num_layers == 1
+            and module.bias
+            and module.proj_size == 0
+        ):
+            raise RuntimeError(f"LSTM non géré : {name} {module}")
+
+        parent_name, _, attr = name.rpartition(".")
+        parent = model.get_submodule(parent_name) if parent_name else model
+        setattr(parent, attr, ExportLSTM(module))
+        count += 1
+        print(f"{name} : hidden={module.hidden_size}", flush=True)
+
+    print(f"{count} LSTM remplacés.", flush=True)
 except Exception:
     fail(3)
 
