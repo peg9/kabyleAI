@@ -317,9 +317,48 @@ except Exception:
     sys.exit("ECHEC de l'export ONNX")
 
 
+def fold_weight_transposes(graph):
+    """Remplace Transpose(constante) par la constante transposée.
+
+    L'export place chaque poids de couche linéaire derrière un Transpose ;
+    la quantification dynamique ne traite que les poids donnés directement
+    en constantes, et laisserait ces couches en 32 bits.
+    """
+    from onnx import numpy_helper
+
+    inits = {i.name: i for i in graph.graph.initializer}
+    users = {}
+    for node in graph.graph.node:
+        for name in node.input:
+            users[name] = users.get(name, 0) + 1
+
+    kept = []
+    folded = 0
+    for node in graph.graph.node:
+        if node.op_type == "Transpose" and node.input[0] in inits:
+            source = inits[node.input[0]]
+            array = numpy_helper.to_array(source)
+            perm = [a.ints for a in node.attribute if a.name == "perm"]
+            axes = list(perm[0]) if perm else None
+            moved = numpy_helper.from_array(np.ascontiguousarray(np.transpose(array, axes)), node.output[0])
+            graph.graph.initializer.append(moved)
+            users[node.input[0]] -= 1
+            folded += 1
+            continue
+        kept.append(node)
+    del graph.graph.node[:]
+    graph.graph.node.extend(kept)
+
+    for name, count in list(users.items()):
+        if count <= 0 and name in inits:
+            graph.graph.initializer.remove(inits[name])
+    return folded
+
+
 def refresh_shapes(path):
     import onnx
     graph = onnx.load(path)
+    print(f"{os.path.basename(path)} : {fold_weight_transposes(graph)} poids transposés repliés", flush=True)
     del graph.graph.value_info[:]
     for value in graph.graph.output:
         value.type.tensor_type.ClearField("shape")
