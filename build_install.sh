@@ -1,8 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Compile, installe et lance KabyleAI.
-# Usage : ./build_install.sh [modele.onnx]
-#   Avec un modèle, il est copié dans l'application sous le nom
-#   matoub_82m.onnx, avec son fichier .onnx.data s'il existe.
+# Usage : ./build_install.sh [dossier_modele]
+#   Le dossier contient matoub_front.onnx et matoub_back.onnx (produits
+#   par export_matoub_onnx.py) ; ils sont copiés dans l'application.
 
 set -euo pipefail
 
@@ -32,20 +32,27 @@ fi
 
 echo "[3/5] Modèle..."
 if [ -n "$MODEL" ]; then
-    if [ ! -f "$MODEL" ]; then
-        echo "Modèle introuvable : $MODEL"
+    if [ ! -d "$MODEL" ]; then
+        echo "Il faut un dossier contenant matoub_front.onnx et matoub_back.onnx : $MODEL"
         exit 1
     fi
 
-    su -c "mkdir -p '$APP_DIR'"
-    su -c "cp '$MODEL' '$APP_DIR/matoub_82m.onnx'"
+    for f in matoub_front.onnx matoub_back.onnx; do
+        if [ ! -f "$MODEL/$f" ]; then
+            echo "Fichier manquant : $MODEL/$f"
+            exit 1
+        fi
+    done
 
-    # Le .onnx référence son fichier de poids par son nom d'origine :
-    # on le copie sans le renommer.
-    if [ -f "$MODEL.data" ]; then
-        su -c "cp '$MODEL.data' '$APP_DIR/'"
-        echo "Poids copiés : $(basename "$MODEL.data")"
-    fi
+    su -c "mkdir -p '$APP_DIR'"
+    su -c "rm -f '$APP_DIR/matoub_82m.onnx' '$APP_DIR/matoub_82m.onnx.data'"
+
+    for f in "$MODEL"/matoub_front.onnx "$MODEL"/matoub_back.onnx \
+             "$MODEL"/matoub_front.onnx.data "$MODEL"/matoub_back.onnx.data; do
+        if [ -f "$f" ]; then
+            su -c "cp '$f' '$APP_DIR/'"
+        fi
+    done
 
     APP_UID=$(su -c "stat -c %u /data/data/$PKG")
     su -c "chown -R $APP_UID:$APP_UID '$APP_DIR'"
