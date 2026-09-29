@@ -20,9 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -488,7 +486,6 @@ fun KabyleAIApp(
 ) {
 
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
     val mainHandler = remember {
         android.os.Handler(android.os.Looper.getMainLooper())
     }
@@ -503,6 +500,11 @@ fun KabyleAIApp(
 
     var translating by remember {
         mutableStateOf(false)
+    }
+
+    // Texte français qui a produit la traduction affichée.
+    var translatedFrom by remember {
+        mutableStateOf("")
     }
 
     var text by remember {
@@ -533,6 +535,68 @@ fun KabyleAIApp(
                     "Permission microphone refusée"
                 }
         }
+
+    val runTranslation: (String, (String) -> Unit) -> Unit = { input, onDone ->
+
+        translating = true
+        status = "Traduction en cours..."
+
+        thread {
+
+            val started = System.currentTimeMillis()
+
+            try {
+
+                val result = translator.translate(input)
+                val seconds =
+                    (System.currentTimeMillis() - started) / 1000
+
+                mainHandler.post {
+                    translation = result
+                    translatedFrom = input
+                    translating = false
+                    status = "Traduction terminée ($seconds s)"
+                    onDone(result)
+                }
+
+            } catch (e: Throwable) {
+
+                mainHandler.post {
+                    translating = false
+                    status = "Erreur traduction : ${e.message}"
+                }
+            }
+        }
+    }
+
+    val speak: (String) -> Unit = { kabyle ->
+
+        val ignored = TtsTextCleaner.ignoredCharacters(kabyle)
+
+        status =
+            if (ignored.isEmpty()) {
+                "Synthèse vocale en cours..."
+            } else {
+                "Synthèse vocale en cours (caractères ignorés : $ignored)..."
+            }
+
+        matoubTts.synthesize(
+            text = kabyle,
+
+            onSuccess = { file ->
+                mainHandler.post {
+                    status = "Lecture en cours..."
+                    matoubTts.play(file)
+                }
+            },
+
+            onError = { error ->
+                mainHandler.post {
+                    status = "Erreur TTS : ${error.message}"
+                }
+            }
+        )
+    }
 
     MaterialTheme {
 
@@ -605,35 +669,7 @@ fun KabyleAIApp(
 
                         } else {
 
-                            translating = true
-                            status = "Traduction en cours..."
-
-                            thread {
-
-                                val started = System.currentTimeMillis()
-
-                                try {
-
-                                    val result = translator.translate(input)
-                                    val seconds =
-                                        (System.currentTimeMillis() - started) / 1000
-
-                                    mainHandler.post {
-                                        translation = result
-                                        translating = false
-                                        status =
-                                            "Traduction terminée ($seconds s)"
-                                    }
-
-                                } catch (e: Throwable) {
-
-                                    mainHandler.post {
-                                        translating = false
-                                        status =
-                                            "Erreur traduction : ${e.message}"
-                                    }
-                                }
-                            }
+                            runTranslation(input) { }
                         }
                     },
 
@@ -667,70 +703,43 @@ fun KabyleAIApp(
                     }
                 )
 
-                Row(
-                    horizontalArrangement =
-                        Arrangement.spacedBy(10.dp),
+                Button(
+
+                    enabled = !translating,
+
+                    onClick = {
+
+                        val input = french
+
+                        if (
+                            translation.isNotBlank() &&
+                            (input.isBlank() || input == translatedFrom)
+                        ) {
+
+                            // Traduction à jour (éventuellement corrigée à la main).
+                            speak(translation)
+
+                        } else if (input.isBlank()) {
+
+                            status = "Écrivez d'abord un texte français"
+
+                        } else if (!translator.isInstalled()) {
+
+                            status =
+                                "Modèle de traduction absent : installez-le avec build_install.sh"
+
+                        } else {
+
+                            // Texte français nouveau ou modifié : traduire, puis lire.
+                            runTranslation(input) { result -> speak(result) }
+                        }
+                    },
+
                     modifier =
                         Modifier.fillMaxWidth()
                 ) {
 
-                    Button(
-
-                        onClick = {
-
-                            if (translation.isBlank()) {
-
-                                status = "Rien à lire : traduisez d'abord"
-
-                            } else {
-
-                                status = "Synthèse vocale en cours..."
-
-                                matoubTts.synthesize(
-                                    text = translation,
-
-                                    onSuccess = { file ->
-                                        mainHandler.post {
-                                            status = "Lecture en cours..."
-                                            matoubTts.play(file)
-                                        }
-                                    },
-
-                                    onError = { error ->
-                                        mainHandler.post {
-                                            status =
-                                                "Erreur TTS : ${error.message}"
-                                        }
-                                    }
-                                )
-                            }
-                        },
-
-                        modifier =
-                            Modifier.weight(1f)
-                    ) {
-
-                        Text("Lire")
-                    }
-
-                    OutlinedButton(
-
-                        onClick = {
-
-                            if (translation.isNotBlank()) {
-                                clipboard.setText(
-                                    AnnotatedString(translation)
-                                )
-                                status = "Traduction copiée"
-                            }
-                        },
-
-                        modifier =
-                            Modifier.weight(1f)
-                    ) {
-
-                        Text("Copier")
-                    }
+                    Text("Lire la traduction")
                 }
 
                 Text(

@@ -101,7 +101,7 @@ class MatoubTts(private val context: Context) {
     ) {
         Thread {
             try {
-                val ids = tokenizer.encode(text)
+                val ids = tokenizer.encode(TtsTextCleaner.clean(text))
 
                 if (ids.size <= MIN_TOKENS) {
                     throw IllegalArgumentException(
