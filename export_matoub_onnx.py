@@ -178,14 +178,19 @@ def refresh_shapes(path):
     del graph.graph.value_info[:]
     for value in graph.graph.output:
         value.type.tensor_type.ClearField("shape")
-    # torch.export note la dimension "frames" comme figée (le LSTM est
+    # torch.export note certaines dimensions comme figées (le LSTM est
     # décomposé avec la taille de l'exemple) alors que le graphe ne dépend
-    # pas de cette valeur : on la remet symbolique.
+    # pas de ces valeurs : on les remet symboliques.
+    symbolic = {
+        "input_ids": {1: "tokens"},
+        "d": {1: "tokens"},
+        "alignment": {1: "tokens", 2: "frames"},
+    }
     for value in graph.graph.input:
-        if value.name == "alignment":
-            dim = value.type.tensor_type.shape.dim[2]
+        for index, name in symbolic.get(value.name, {}).items():
+            dim = value.type.tensor_type.shape.dim[index]
             dim.Clear()
-            dim.dim_param = "frames"
+            dim.dim_param = name
     graph = onnx.shape_inference.infer_shapes(graph)
     onnx.save(graph, path)
 
@@ -387,16 +392,30 @@ step("TEST ONNX RUNTIME")
 try:
     front_session = ort.InferenceSession(FRONT, providers=["CPUExecutionProvider"])
     back_session = ort.InferenceSession(BACK, providers=["CPUExecutionProvider"])
+    for label, session in (("avant", front_session), ("arrière", back_session)):
+        print(
+            f"Entrées {label} : "
+            + ", ".join(f"{i.name}{i.shape}" for i in session.get_inputs()),
+            flush=True,
+        )
     ok = True
 
     for n, ids in cases.items():
         d, frames = front_session.run(["d", "frames"], {"input_ids": ids})
         same_frames = np.array_equal(frames, expected_frames[n])
         alignment = make_alignment(frames, n)
-        audio = back_session.run(
-            ["waveform"],
-            {"input_ids": ids, "d": d, "alignment": alignment},
-        )[0]
+        try:
+            audio = back_session.run(
+                ["waveform"],
+                {"input_ids": ids, "d": d, "alignment": alignment},
+            )[0]
+        except Exception:
+            print(
+                f"Graphe arrière refusé pour {n} tokens : "
+                f"d{d.shape} alignment{alignment.shape}",
+                flush=True,
+            )
+            raise
         same = audio.shape[-1] == expected[n]
         finite = bool(np.isfinite(audio).all())
         ok = ok and same and finite and same_frames
