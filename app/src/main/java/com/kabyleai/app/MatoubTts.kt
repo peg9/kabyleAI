@@ -4,31 +4,38 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtException
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.FloatBuffer
 
 class MatoubTts(private val context: Context) {
 
     companion object {
-        private const val MODEL_PATH = "matoub/matoub_82m.onnx"
+        // Deux graphes (voir export_matoub_onnx.py) : le premier prédit les
+        // durées, l'application construit l'alignement, le second synthétise.
+        private const val FRONT_PATH = "matoub/matoub_front.onnx"
+        private const val BACK_PATH = "matoub/matoub_back.onnx"
         private const val VOCAB_PATH = "matoub/vocab.json"
 
         private const val SAMPLE_RATE = 24000
 
-        // Bornes de l'export dynamique (export_matoub_dynamic.py) :
+        // Bornes de l'export dynamique (export_matoub_onnx.py) :
         // au moins les deux "$" de début et de fin, au plus 510 tokens.
         private const val MIN_TOKENS = 2
         private const val MAX_TOKENS = 510
+
+        // Borne de la dimension "frames" de l'export.
+        private const val MAX_FRAMES = 20000
     }
 
     private val environment: OrtEnvironment =
         OrtEnvironment.getEnvironment()
 
-    private var session: OrtSession? = null
+    private var frontSession: OrtSession? = null
+    private var backSession: OrtSession? = null
     private var mediaPlayer: MediaPlayer? = null
 
     private val tokenizer: MatoubTokenizer by lazy {
@@ -54,27 +61,37 @@ class MatoubTts(private val context: Context) {
         return vocab
     }
 
-    private fun getSession(): OrtSession {
-        if (session == null) {
-            val model = File(context.filesDir, MODEL_PATH)
+    private fun openSession(path: String): OrtSession {
+        val model = File(context.filesDir, path)
 
-            if (!model.exists()) {
-                throw IllegalStateException(
-                    "Modèle Matoub introuvable : ${model.absolutePath}"
-                )
-            }
-
-            val options = OrtSession.SessionOptions()
-            options.setIntraOpNumThreads(4)
-            options.setInterOpNumThreads(1)
-
-            session = environment.createSession(
-                model.absolutePath,
-                options
+        if (!model.exists()) {
+            throw IllegalStateException(
+                "Modèle Matoub introuvable : ${model.absolutePath}"
             )
         }
 
-        return session!!
+        val options = OrtSession.SessionOptions()
+        options.setIntraOpNumThreads(4)
+        options.setInterOpNumThreads(1)
+
+        return environment.createSession(
+            model.absolutePath,
+            options
+        )
+    }
+
+    private fun front(): OrtSession {
+        if (frontSession == null) {
+            frontSession = openSession(FRONT_PATH)
+        }
+        return frontSession!!
+    }
+
+    private fun back(): OrtSession {
+        if (backSession == null) {
+            backSession = openSession(BACK_PATH)
+        }
+        return backSession!!
     }
 
     fun synthesize(
@@ -99,48 +116,73 @@ class MatoubTts(private val context: Context) {
                     )
                 }
 
-                val sess = getSession()
+                val frontSess = front()
+                val backSess = back()
 
-                val input = OnnxTensor.createTensor(
+                OnnxTensor.createTensor(
                     environment,
                     arrayOf(ids)
-                )
+                ).use { input ->
 
-                input.use { tensor ->
+                    // 1. Durées prédites pour chaque token.
+                    frontSess.run(mapOf("input_ids" to input)).use { predicted ->
 
-                    val inputs = mapOf(
-                        "input_ids" to tensor
-                    )
+                        val frames = toLongArray(predicted[1].value)
+                        val total = frames.sum().toInt()
 
-                    runModel(sess, inputs, ids.size).use { result ->
-
-                        val waveform = flatten(result[0].value)
-
-                        if (waveform.isEmpty()) {
+                        if (total < 2 || total > MAX_FRAMES) {
                             throw IllegalStateException(
-                                "Le modèle n'a produit aucun échantillon."
+                                "Nombre de trames hors limites : $total"
                             )
                         }
 
-                        if (waveform.any { !it.isFinite() }) {
-                            throw IllegalStateException(
-                                "Le modèle a produit des valeurs " +
-                                "non finies (NaN ou infini)."
+                        // 2. Matrice d'alignement [1, tokens, total].
+                        val alignment = buildAlignment(frames, total)
+
+                        OnnxTensor.createTensor(
+                            environment,
+                            FloatBuffer.wrap(alignment),
+                            longArrayOf(1, ids.size.toLong(), total.toLong())
+                        ).use { alignmentTensor ->
+
+                            val inputs = mapOf(
+                                "input_ids" to input,
+                                "d" to (predicted[0] as OnnxTensor),
+                                "alignment" to alignmentTensor
                             )
+
+                            // 3. Synthèse de l'audio.
+                            backSess.run(inputs).use { result ->
+
+                                val waveform = flatten(result[0].value)
+
+                                if (waveform.isEmpty()) {
+                                    throw IllegalStateException(
+                                        "Le modèle n'a produit aucun échantillon."
+                                    )
+                                }
+
+                                if (waveform.any { !it.isFinite() }) {
+                                    throw IllegalStateException(
+                                        "Le modèle a produit des valeurs " +
+                                        "non finies (NaN ou infini)."
+                                    )
+                                }
+
+                                val wavFile = File(
+                                    context.filesDir,
+                                    "matoub_output.wav"
+                                )
+
+                                writeWav(
+                                    wavFile,
+                                    waveform,
+                                    SAMPLE_RATE
+                                )
+
+                                onSuccess(wavFile)
+                            }
                         }
-
-                        val wavFile = File(
-                            context.filesDir,
-                            "matoub_output.wav"
-                        )
-
-                        writeWav(
-                            wavFile,
-                            waveform,
-                            SAMPLE_RATE
-                        )
-
-                        onSuccess(wavFile)
                     }
                 }
 
@@ -150,27 +192,34 @@ class MatoubTts(private val context: Context) {
         }.start()
     }
 
-    private fun runModel(
-        sess: OrtSession,
-        inputs: Map<String, OnnxTensor>,
-        tokenCount: Int
-    ): OrtSession.Result {
-        try {
-            return sess.run(inputs)
-        } catch (e: OrtException) {
-            // Un modèle exporté avec une taille figée refuse toute
-            // autre longueur avec "Got invalid dimensions".
-            if (e.message?.contains("invalid dimensions") == true) {
-                throw IllegalStateException(
-                    "Le modèle installé a une taille d'entrée figée " +
-                    "et refuse $tokenCount tokens. Installez le " +
-                    "modèle exporté en dynamique.",
-                    e
-                )
+    // Ligne t : des 1 sur les trames qui appartiennent au token t.
+    private fun buildAlignment(frames: LongArray, total: Int): FloatArray {
+        val alignment = FloatArray(frames.size * total)
+        var start = 0
+
+        for (token in frames.indices) {
+            val end = start + frames[token].toInt()
+
+            for (frame in start until end) {
+                alignment[token * total + frame] = 1.0f
             }
-            throw e
+
+            start = end
         }
+
+        return alignment
     }
+
+    private fun toLongArray(value: Any?): LongArray =
+        when (value) {
+            is LongArray -> value
+            is IntArray -> LongArray(value.size) { value[it].toLong() }
+            is Array<*> -> toLongArray(value.firstOrNull())
+            else -> throw IllegalStateException(
+                "Durées ONNX inattendues : " +
+                value?.javaClass?.name
+            )
+        }
 
     // La sortie "waveform" est [batch, samples] ou [batch, 1, samples]
     // selon l'export ; on garde le premier élément du batch.
@@ -226,8 +275,10 @@ class MatoubTts(private val context: Context) {
 
     fun close() {
         stop()
-        session?.close()
-        session = null
+        frontSession?.close()
+        frontSession = null
+        backSession?.close()
+        backSession = null
     }
 
     private fun writeWav(

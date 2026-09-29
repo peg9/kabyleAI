@@ -1,6 +1,6 @@
 """Export ONNX de Matoub-82M à longueur variable, pour Android.
 
-Deux obstacles empêchaient l'export dynamique :
+Trois obstacles empêchaient l'export dynamique :
 
 1. TorchSTFT (istftnet.py) utilise torch.stft / torch.istft avec des
    nombres complexes, que l'exporteur ONNX refuse
@@ -9,12 +9,25 @@ Deux obstacles empêchaient l'export dynamique :
 
 2. MatoubForTextToWaveform.forward boucle en Python sur le batch et
    convertit les longueurs en int() : la trace fige alors la durée de
-   l'audio sur celle de l'exemple (d'où les modèles "fixed161"). On
-   appelle directement _synthesise(), qui construit l'alignement avec
-   repeat_interleave et reste dynamique.
+   l'audio sur celle de l'exemple (d'où les modèles "fixed161").
 
-Entrée ONNX : input_ids int64 [1, tokens]
-Sortie ONNX : waveform float32 [1, samples], 24 kHz
+3. Le nombre total de trames (somme des durées prédites) n'est connu
+   qu'à l'exécution : torch.export ne peut pas s'en servir comme
+   dimension ("Could not guard on data-dependent expression u0 >= 1").
+
+Le modèle est donc exporté en deux graphes, et l'alignement (durées ->
+matrice tokens x trames) se fait entre les deux, dans l'application :
+
+  matoub_front.onnx
+    entrée  input_ids  int64   [1, tokens]
+    sorties d          float32 [1, tokens, C]
+            frames     int64   [tokens]        trames par token
+
+  matoub_back.onnx
+    entrées input_ids  int64   [1, tokens]
+            d          float32 [1, tokens, C]
+            alignment  float32 [1, tokens, N]  N = somme de frames
+    sortie  waveform   float32 [1, samples]    24 kHz
 """
 
 import faulthandler
@@ -35,9 +48,11 @@ import torch.nn.functional as F
 MODEL = os.path.expanduser(
     os.environ.get("MATOUB_MODEL", "~/kabyle-models/matoub-model")
 )
-OUT = os.path.expanduser(
-    os.environ.get("MATOUB_OUT", "~/kabyle-models/matoub_dynamic_real.onnx")
+OUT_DIR = os.path.expanduser(
+    os.environ.get("MATOUB_OUT_DIR", "~/kabyle-models/matoub_dynamic")
 )
+FRONT = os.path.join(OUT_DIR, "matoub_front.onnx")
+BACK = os.path.join(OUT_DIR, "matoub_back.onnx")
 
 sys.path.insert(0, os.path.dirname(MODEL))
 
@@ -105,15 +120,151 @@ class RealSTFT(nn.Module):
         return audio[:, :, pad:-pad]
 
 
-class Wrapper(nn.Module):
+class ExportLSTM(nn.Module):
+    """nn.LSTM bidirectionnel (batch_first, une couche) exporté comme
+    opérateur ONNX LSTM.
+
+    Sinon torch.export décompose le LSTM avec la longueur de l'exemple et
+    fige toutes les tailles calculées ensuite (interpolations de SineGen,
+    indices d'échantillonnage) : le modèle exporté ne marche plus que pour
+    cette longueur. En calcul normal, le LSTM d'origine est utilisé.
+    """
+
+    def __init__(self, lstm: nn.LSTM) -> None:
+        super().__init__()
+        self.lstm = lstm
+        hidden = lstm.hidden_size
+        self.hidden = hidden
+
+        # PyTorch ordonne les portes i, f, g, o ; ONNX i, o, f, g.
+        order = torch.cat([
+            torch.arange(0, hidden),
+            torch.arange(3 * hidden, 4 * hidden),
+            torch.arange(hidden, 2 * hidden),
+            torch.arange(2 * hidden, 3 * hidden),
+        ])
+
+        def direction(suffix):
+            w = getattr(lstm, "weight_ih_l0" + suffix).detach()[order]
+            r = getattr(lstm, "weight_hh_l0" + suffix).detach()[order]
+            b = torch.cat([
+                getattr(lstm, "bias_ih_l0" + suffix).detach()[order],
+                getattr(lstm, "bias_hh_l0" + suffix).detach()[order],
+            ])
+            return w, r, b
+
+        (wf, rf, bf), (wb, rb, bb) = direction(""), direction("_reverse")
+        self.register_buffer("onnx_w", torch.stack([wf, wb]), persistent=False)
+        self.register_buffer("onnx_r", torch.stack([rf, rb]), persistent=False)
+        self.register_buffer("onnx_b", torch.stack([bf, bb]), persistent=False)
+
+    def flatten_parameters(self):
+        self.lstm.flatten_parameters()
+
+    def forward(self, x, hx=None):
+        if hx is not None or not (
+            torch.compiler.is_exporting() or torch.onnx.is_in_onnx_export()
+        ):
+            return self.lstm(x, hx)
+
+        # ONNX Runtime ne gère que layout=0 : [séquence, batch, entrée] en
+        # entrée, [séquence, directions, batch, cachée] en sortie.
+        batch, steps = x.shape[0], x.shape[1]
+        y = torch.onnx.ops.symbolic(
+            "::LSTM",
+            (x.transpose(0, 1), self.onnx_w, self.onnx_r, self.onnx_b),
+            {"hidden_size": self.hidden, "direction": "bidirectional"},
+            dtype=x.dtype,
+            shape=(steps, 2, batch, self.hidden),
+        )
+        y = y.permute(2, 0, 1, 3).reshape(batch, steps, 2 * self.hidden)
+        return y, None
+
+
+class Front(nn.Module):
+    """Début de MatoubForTextToWaveform._synthesise (speed=1) : encodage du
+    texte et durées prédites."""
+
     def __init__(self, model) -> None:
         super().__init__()
         self.model = model
 
     def forward(self, input_ids):
-        style = self.model.voice.reshape(1, -1)
-        waveform, _ = self.model._synthesise(input_ids, style, 1.0)
-        return waveform.reshape(1, -1)
+        m = self.model
+        style = m.voice.reshape(1, -1)
+        prosody_style = style[:, m.config.style_dim:]
+
+        attention = torch.ones_like(input_ids)
+        bert_dur = m.bert(input_ids, attention_mask=attention).last_hidden_state
+        d_en = m.bert_encoder(bert_dur).transpose(-1, -2)
+
+        d = m.predictor.text_encoder(d_en, prosody_style)
+        x, _ = m.predictor.lstm(d)
+        duration = torch.sigmoid(m.predictor.duration_proj(x)).sum(dim=-1)
+        frames = torch.round(duration).clamp(min=1).long().squeeze(0)
+        return d, frames
+
+
+class Back(nn.Module):
+    """Fin de _synthesise : prosodie, décodeur et vocodeur, à partir de
+    l'alignement fourni."""
+
+    def __init__(self, model) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, d, alignment):
+        m = self.model
+        style_dim = m.config.style_dim
+        style = m.voice.reshape(1, -1)
+        prosody_style = style[:, style_dim:]
+        acoustic_style = style[:, :style_dim]
+
+        pitch, energy = m.predictor.contours(
+            d.transpose(-1, -2) @ alignment, prosody_style
+        )
+        asr = m.text_encoder(input_ids) @ alignment
+        waveform = m.decoder(asr, pitch, energy, acoustic_style)
+        return waveform.squeeze(1).squeeze(0).reshape(1, -1)
+
+
+def refresh_shapes(path):
+    """Efface les formes enregistrées dans le graphe et les recalcule.
+
+    Le LSTM exporté garde la forme de l'exemple (12 tokens) sur sa sortie,
+    et tout ce qui en dépend hérite de ce 12 ; ONNX Runtime s'y fie pour
+    fusionner des opérations et échoue dès que la longueur change.
+    """
+    graph = onnx.load(path)
+    del graph.graph.value_info[:]
+    for value in graph.graph.output:
+        value.type.tensor_type.ClearField("shape")
+    # torch.export note certaines dimensions comme figées (le LSTM est
+    # décomposé avec la taille de l'exemple) alors que le graphe ne dépend
+    # pas de ces valeurs : on les remet symboliques.
+    symbolic = {
+        "input_ids": {1: "tokens"},
+        "d": {1: "tokens"},
+        "alignment": {1: "tokens", 2: "frames"},
+    }
+    for value in graph.graph.input:
+        for index, name in symbolic.get(value.name, {}).items():
+            dim = value.type.tensor_type.shape.dim[index]
+            dim.Clear()
+            dim.dim_param = name
+    graph = onnx.shape_inference.infer_shapes(graph)
+    onnx.save(graph, path)
+
+
+def make_alignment(frames, tokens):
+    """Matrice [1, tokens, N] : 1 pour les trames appartenant au token."""
+    total = int(frames.sum())
+    alignment = np.zeros((1, tokens, total), dtype=np.float32)
+    start = 0
+    for t, count in enumerate(frames):
+        alignment[0, t, start:start + int(count)] = 1.0
+        start += int(count)
+    return alignment
 
 
 def step(title):
@@ -196,9 +347,37 @@ except Exception:
     fail(3)
 
 
+step("REMPLACEMENT DES LSTM")
+
+try:
+    count = 0
+    for name, module in list(model.named_modules()):
+        if not isinstance(module, nn.LSTM):
+            continue
+        if not (
+            module.bidirectional
+            and module.batch_first
+            and module.num_layers == 1
+            and module.bias
+            and module.proj_size == 0
+        ):
+            raise RuntimeError(f"LSTM non géré : {name} {module}")
+
+        parent_name, _, attr = name.rpartition(".")
+        parent = model.get_submodule(parent_name) if parent_name else model
+        setattr(parent, attr, ExportLSTM(module))
+        count += 1
+        print(f"{name} : hidden={module.hidden_size}", flush=True)
+
+    print(f"{count} LSTM remplacés.", flush=True)
+except Exception:
+    fail(3)
+
+
 step("TEST PYTORCH")
 
-wrapper = Wrapper(model).eval()
+front = Front(model).eval()
+back = Back(model).eval()
 
 boundary = vocab["$"]
 symbols = [v for k, v in vocab.items() if k not in ("$", " ")]
@@ -213,14 +392,31 @@ def sample_ids(n):
 LENGTHS = [6, 12, 20, 36, 43, 80, 160]
 cases = {n: sample_ids(n) for n in LENGTHS}
 expected = {}
+expected_frames = {}
 
 try:
     with torch.no_grad():
         for n, ids in cases.items():
-            audio = wrapper(torch.from_numpy(ids))
-            expected[n] = audio.shape[-1]
+            tokens = torch.from_numpy(ids)
+            reference, ref_frames = model._synthesise(
+                tokens, model.voice.reshape(1, -1), 1.0
+            )
+            d, frames = front(tokens)
+            if not torch.equal(frames, ref_frames):
+                raise RuntimeError(f"Durées différentes du modèle ({n} tokens)")
+
+            alignment = torch.from_numpy(make_alignment(frames.numpy(), n))
+            audio = back(tokens, d, alignment)
+            expected[n] = reference.shape[-1]
+            expected_frames[n] = frames.numpy()
+            if audio.shape[-1] != expected[n]:
+                raise RuntimeError(
+                    f"Longueur différente du modèle ({n} tokens) : "
+                    f"{audio.shape[-1]} au lieu de {expected[n]}"
+                )
             print(
-                f"Tokens: {n} Sortie: {tuple(audio.shape)} "
+                f"Tokens: {n} Trames: {int(frames.sum())} "
+                f"Sortie: {tuple(audio.shape)} "
                 f"Finite: {bool(torch.isfinite(audio).all())}",
                 flush=True,
             )
@@ -230,66 +426,49 @@ except Exception:
 
 step("EXPORT ONNX")
 
-
-# Un exemple court garde les tenseurs intermédiaires petits pendant la trace.
-EXAMPLE = torch.from_numpy(cases[12])
-
-
-def export_dynamo():
-    program = torch.onnx.export(
-        wrapper,
-        (EXAMPLE,),
-        input_names=["input_ids"],
-        output_names=["waveform"],
-        dynamic_shapes={"input_ids": {1: torch.export.Dim("tokens", min=2, max=510)}},
-        dynamo=True,
-        opset_version=18,
-    )
-    program.save(OUT)
-
-
-def export_torchscript():
-    torch.onnx.export(
-        wrapper,
-        (EXAMPLE,),
-        OUT,
-        input_names=["input_ids"],
-        output_names=["waveform"],
-        dynamic_axes={"input_ids": {1: "tokens"}, "waveform": {1: "samples"}},
-        opset_version=17,
-        dynamo=False,
-        do_constant_folding=True,
-    )
-
-
-# Le PyTorch de Termux plante dans l'exporteur TorchScript ("attribute
-# has the wrong type") : on essaie d'abord l'exporteur torch.export.
-exported = None
-with torch.no_grad():
-    exporters = (("dynamo", export_dynamo), ("torchscript", export_torchscript))
-    only = os.environ.get("MATOUB_EXPORTER")
-    for name, fn in exporters:
-        if only and name != only:
-            continue
-        print(f"Exporteur {name}...", flush=True)
-        try:
-            if os.path.exists(OUT):
-                os.remove(OUT)
-            fn()
-            exported = name
-            break
-        except Exception:
-            print(f"\nExporteur {name} : ECHEC", flush=True)
-            traceback.print_exc(limit=4)
-
-if exported is None:
-    print("\nECHEC (code 5) : aucun exporteur n'a abouti", flush=True)
-    sys.exit(5)
+os.makedirs(OUT_DIR, exist_ok=True)
+EX = cases[12]
+tokens_dim = torch.export.Dim("tokens", min=2, max=510)
+frames_dim = torch.export.Dim("frames", min=2, max=20000)
 
 try:
-    onnx.checker.check_model(OUT)
-    size = os.path.getsize(OUT) / 1e6
-    print(f"Export terminé avec {exported} : {OUT} ({size:.0f} Mo)", flush=True)
+    with torch.no_grad():
+        ex_ids = torch.from_numpy(EX)
+        ex_d, ex_frames = front(ex_ids)
+        ex_align = torch.from_numpy(make_alignment(ex_frames.numpy(), EX.shape[1]))
+
+        print("Export du graphe avant...", flush=True)
+        torch.onnx.export(
+            front,
+            (ex_ids,),
+            input_names=["input_ids"],
+            output_names=["d", "frames"],
+            dynamic_shapes={"input_ids": {1: tokens_dim}},
+            dynamo=True,
+            opset_version=18,
+            optimize=False,
+        ).save(FRONT)
+
+        print("Export du graphe arrière...", flush=True)
+        torch.onnx.export(
+            back,
+            (ex_ids, ex_d, ex_align),
+            input_names=["input_ids", "d", "alignment"],
+            output_names=["waveform"],
+            dynamic_shapes={
+                "input_ids": {1: tokens_dim},
+                "d": {1: tokens_dim},
+                "alignment": {1: tokens_dim, 2: frames_dim},
+            },
+            dynamo=True,
+            opset_version=18,
+            optimize=False,
+        ).save(BACK)
+
+    for path in (FRONT, BACK):
+        refresh_shapes(path)
+        onnx.checker.check_model(path)
+        print(f"{path} ({os.path.getsize(path) / 1e6:.0f} Mo)", flush=True)
 except Exception:
     fail(5)
 
@@ -297,20 +476,40 @@ except Exception:
 step("TEST ONNX RUNTIME")
 
 # L'audio varie d'une exécution à l'autre (bruit de la source harmonique) :
-# on compare la longueur, qui dépend seulement des durées prédites.
+# on compare les durées, exactes, et la longueur de l'audio.
 try:
-    session = ort.InferenceSession(OUT, providers=["CPUExecutionProvider"])
+    front_session = ort.InferenceSession(FRONT, providers=["CPUExecutionProvider"])
+    back_session = ort.InferenceSession(BACK, providers=["CPUExecutionProvider"])
+    for label, session in (("avant", front_session), ("arrière", back_session)):
+        print(
+            f"Entrées {label} : "
+            + ", ".join(f"{i.name}{i.shape}" for i in session.get_inputs()),
+            flush=True,
+        )
     ok = True
 
     for n, ids in cases.items():
-        audio = session.run(["waveform"], {"input_ids": ids})[0]
+        d, frames = front_session.run(["d", "frames"], {"input_ids": ids})
+        same_frames = np.array_equal(frames, expected_frames[n])
+        alignment = make_alignment(frames, n)
+        try:
+            audio = back_session.run(
+                ["waveform"],
+                {"input_ids": ids, "d": d, "alignment": alignment},
+            )[0]
+        except Exception:
+            print(
+                f"Graphe arrière refusé pour {n} tokens : "
+                f"d{d.shape} alignment{alignment.shape}",
+                flush=True,
+            )
+            raise
         same = audio.shape[-1] == expected[n]
         finite = bool(np.isfinite(audio).all())
-        ok = ok and same and finite
+        ok = ok and same and finite and same_frames
         print(
-            f"Tokens: {n} Sortie: {audio.shape} "
-            f"PyTorch: {expected[n]} "
-            f"{'OK' if same else 'LONGUEUR DIFFERENTE'} Finite: {finite}",
+            f"Tokens: {n} Sortie: {audio.shape} PyTorch: {expected[n]} "
+            f"{'OK' if same and same_frames else 'DIFFERENT'} Finite: {finite}",
             flush=True,
         )
 
@@ -319,7 +518,7 @@ try:
         ok = False
 
     if not ok:
-        print("\nECHEC : le modèle ONNX ne suit pas PyTorch.", flush=True)
+        print("\nECHEC : les modèles ONNX ne suivent pas PyTorch.", flush=True)
         sys.exit(6)
 except SystemExit:
     raise
@@ -328,4 +527,4 @@ except Exception:
 
 
 print("\n=== EXPORT ET TESTS TERMINES ===", flush=True)
-print("Installation : ./build_install.sh " + OUT, flush=True)
+print("Installation : ./build_install.sh " + OUT_DIR, flush=True)
