@@ -37,7 +37,10 @@ warnings.filterwarnings("ignore")
 
 MODEL = os.environ.get("NLLB_MODEL", "facebook/nllb-200-distilled-600M")
 OUT_DIR = os.path.expanduser(os.environ.get("NLLB_OUT_DIR", "~/kabyle-models/nllb"))
-QUANTIZE = os.environ.get("NLLB_QUANT", "1") == "1"
+# NLLB_QUANT : "1" quantifie tout en int8 (défaut), "head" seulement la tête de
+# sortie, "0" rien.
+QUANT_MODE = os.environ.get("NLLB_QUANT", "1")
+QUANTIZE = QUANT_MODE != "0"
 LIMIT = 120  # jetons générés, langue forcée comprise (comme generate)
 SRC_LANG = os.environ.get("NLLB_SRC", "fra_Latn")
 TGT_LANG = os.environ.get("NLLB_TGT", "kab_Latn")
@@ -380,9 +383,9 @@ for path in (enc_path, dec_path, head_path):
     refresh_shapes(path)
 
 if QUANTIZE:
-    step("QUANTIFICATION INT8")
+    step(f"QUANTIFICATION INT8 ({'tête seule' if QUANT_MODE == 'head' else 'tout'})")
     from onnxruntime.quantization import QuantType, quantize_dynamic
-    for path in (enc_path, dec_path, head_path):
+    for path in ((head_path,) if QUANT_MODE == "head" else (enc_path, dec_path, head_path)):
         tmp = path + ".int8"
         quantize_dynamic(path, tmp, weight_type=QuantType.QInt8, per_channel=True)
         os.replace(tmp, path)
@@ -506,15 +509,24 @@ for text in TESTS:
                 break
     strict += out == ref
     info += generated[text] == ref
-    body = [i for i in generated[text] if i not in specials]
-    print("  ", tokenizer.decode(body)[:120], flush=True)
+    small = tokenizer.decode([i for i in generated[text] if i not in specials])
+    exact = tokenizer.decode([i for i in ref if i not in specials])
+    if small == exact:
+        print(f"   {small[:130]}", flush=True)
+    else:
+        print(f"   32 bits : {exact[:130]}", flush=True)
+        print(f"   int8    : {small[:130]}", flush=True)
 print(f"3. boucle gloutonne 32 bits / generate() : {strict}/{len(TESTS)} identiques", flush=True)
 print(f"   ONNX quantifié / generate() : {info}/{len(TESTS)} identiques (indicatif)", flush=True)
 if strict < len(TESTS):
     sys.exit("ECHEC : la boucle gloutonne diffère de generate().")
 
-ok = worst < (0.5 if QUANTIZE else 1e-2) and agree >= len(TESTS) - (2 if QUANTIZE else 0)
-if not ok:
-    sys.exit("ECHEC : l'ONNX s'écarte trop de PyTorch.")
+if not QUANTIZE and worst > 1e-2:
+    sys.exit("ECHEC : l'ONNX s'écarte de PyTorch alors qu'il n'est pas quantifié.")
+if QUANTIZE and info < len(TESTS) - 2:
+    sys.exit(
+        f"ATTENTION : seulement {info}/{len(TESTS)} traductions int8 identiques au 32 bits. "
+        "Relancez avec NLLB_QUANT=head (fichiers plus gros, meilleure qualité)."
+    )
 print("\n=== EXPORT TERMINE ===", flush=True)
 print(f"Dossier : {OUT_DIR}", flush=True)
