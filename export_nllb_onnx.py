@@ -26,7 +26,6 @@ d'ONNX Runtime avec celle de PyTorch (generate, num_beams=1).
 """
 
 import os
-import struct
 import sys
 import warnings
 
@@ -87,7 +86,7 @@ step("CHARGEMENT")
 
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer  # noqa: E402
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL)
+tokenizer = AutoTokenizer.from_pretrained(MODEL, src_lang=SRC_LANG)
 model = AutoModelForSeq2SeqLM.from_pretrained(MODEL).eval()
 cfg = model.config
 d_model = cfg.d_model
@@ -117,7 +116,23 @@ step("VOCABULAIRE ET EMBEDDINGS")
 
 import json  # noqa: E402
 
-backend = json.loads(tokenizer.backend_tokenizer.to_str())
+
+
+def tokenizer_json():
+    """Le tokenizer.json, quelle que soit la version de transformers."""
+    for holder in ("backend_tokenizer", "_tokenizer"):
+        inner = getattr(tokenizer, holder, None)
+        if inner is not None and hasattr(inner, "to_str"):
+            return json.loads(inner.to_str())
+    path = os.path.join(MODEL, "tokenizer.json")
+    if not os.path.exists(path):
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(MODEL, "tokenizer.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+backend = tokenizer_json()
 unigram = backend["model"]
 if unigram.get("type") != "Unigram":
     sys.exit(f"Tokenizer {unigram.get('type')} : seul Unigram est géré.")
@@ -318,6 +333,19 @@ for path in (enc_path, dec_path, head_path):
 
 
 step("VERIFICATIONS")
+
+# 0. Les identifiants source construits ici sont ceux du tokenizer Hugging Face.
+mismatch = [t for t in TESTS if tokenizer(t).input_ids != encode_source(t)]
+if mismatch:
+    print(
+        f"0. ATTENTION : {len(mismatch)}/{len(TESTS)} phrases ont des identifiants "
+        f"source différents de tokenizer(texte) ; exemple : {mismatch[0]!r}",
+        flush=True,
+    )
+    print("   attendu :", tokenizer(mismatch[0]).input_ids[:12], flush=True)
+    print("   obtenu  :", encode_source(mismatch[0])[:12], flush=True)
+else:
+    print("0. identifiants source identiques à tokenizer(texte)", flush=True)
 
 import onnxruntime as ort  # noqa: E402
 
