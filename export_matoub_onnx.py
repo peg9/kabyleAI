@@ -158,6 +158,9 @@ class ExportLSTM(nn.Module):
         self.register_buffer("onnx_r", torch.stack([rf, rb]), persistent=False)
         self.register_buffer("onnx_b", torch.stack([bf, bb]), persistent=False)
 
+    def flatten_parameters(self):
+        self.lstm.flatten_parameters()
+
     def forward(self, x, hx=None):
         if hx is not None or not (
             torch.compiler.is_exporting() or torch.onnx.is_in_onnx_export()
