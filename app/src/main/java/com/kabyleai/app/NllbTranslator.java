@@ -42,7 +42,7 @@ public final class NllbTranslator implements AutoCloseable {
     private final OrtEnvironment environment = OrtEnvironment.getEnvironment();
 
     private Config config;
-    private UnigramTokenizer tokenizer;
+    private Tokenizer tokenizer;
     private EmbeddingTable embeddings;
     private OrtSession encoder;
     private OrtSession decoder;
@@ -71,6 +71,8 @@ public final class NllbTranslator implements AutoCloseable {
         int decoderStartId;
         int srcLangId;
         int tgtLangId;
+        String tokenizerKind = "unigram";
+        boolean ignoreMerges;
         Set<Integer> specials = new HashSet<>();
     }
 
@@ -94,6 +96,8 @@ public final class NllbTranslator implements AutoCloseable {
                     case "decoder_start_id": config.decoderStartId = Integer.parseInt(value); break;
                     case "src_lang_id": config.srcLangId = Integer.parseInt(value); break;
                     case "tgt_lang_id": config.tgtLangId = Integer.parseInt(value); break;
+                    case "tokenizer": config.tokenizerKind = value; break;
+                    case "ignore_merges": config.ignoreMerges = Boolean.parseBoolean(value); break;
                     case "specials":
                         for (String part : value.split(",")) {
                             if (!part.isEmpty()) {
@@ -159,8 +163,13 @@ public final class NllbTranslator implements AutoCloseable {
             return;
         }
         config = readConfig(new File(directory, "nllb_config.txt"));
-        tokenizer = new UnigramTokenizer(
-                new File(directory, "nllb_vocab.tsv"), config.specials, config.unkId);
+        File vocab = new File(directory, "nllb_vocab.tsv");
+        if ("bpe".equals(config.tokenizerKind)) {
+            tokenizer = new BpeTokenizer(vocab, new File(directory, "nllb_merges.txt"),
+                    config.specials, config.unkId, config.ignoreMerges);
+        } else {
+            tokenizer = new UnigramTokenizer(vocab, config.specials, config.unkId);
+        }
         embeddings = new EmbeddingTable(
                 new File(directory, "nllb_embed.i8"),
                 new File(directory, "nllb_embed.scales"),
@@ -175,6 +184,12 @@ public final class NllbTranslator implements AutoCloseable {
                 new File(directory, "nllb_decoder.onnx").getAbsolutePath(), options);
         head = environment.createSession(
                 new File(directory, "nllb_head.onnx").getAbsolutePath(), options);
+    }
+
+    /** Tokenizer chargé (pour les tests). */
+    Tokenizer tokenizer() throws IOException, OrtException {
+        ensureLoaded();
+        return tokenizer;
     }
 
     /** Vrai si tous les fichiers du modèle sont présents. */

@@ -133,10 +133,25 @@ def tokenizer_json():
 
 
 backend = tokenizer_json()
-unigram = backend["model"]
-if unigram.get("type") != "Unigram":
-    sys.exit(f"Tokenizer {unigram.get('type')} : seul Unigram est géré.")
-pieces = unigram["vocab"]
+model_json = backend["model"]
+kind = model_json.get("type")
+print(f"tokenizer : {kind}", flush=True)
+
+if kind == "Unigram":
+    pieces = model_json["vocab"]  # [[pièce, score], ...], l'indice est l'identifiant
+    merges = None
+elif kind == "BPE":
+    if model_json.get("byte_fallback") or model_json.get("continuing_subword_prefix") \
+            or model_json.get("end_of_word_suffix"):
+        sys.exit("Tokenizer BPE avec byte_fallback ou préfixes : non géré.")
+    by_id = {int(i): piece for piece, i in model_json["vocab"].items()}
+    pieces = [[by_id.get(i, f"<extra_{i}>"), 0.0] for i in range(max(by_id) + 1)]
+    merges = []
+    for merge in model_json["merges"]:
+        left, right = merge.split(" ", 1) if isinstance(merge, str) else merge
+        merges.append(f"{left} {right}")
+else:
+    sys.exit(f"Tokenizer {kind} : seuls Unigram et BPE sont gérés.")
 
 # Table id -> pièce complète (les codes de langue sont des jetons ajoutés).
 table = [None] * vocab_size
@@ -153,6 +168,11 @@ for index, entry in enumerate(table):
         table[index] = (f"<extra_{index}>", 0.0)
         specials.add(index)
 specials.update({tokenizer.bos_token_id, eos_id, pad_id, unk_id})
+
+if merges is not None:
+    with open(os.path.join(OUT_DIR, "nllb_merges.txt"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(merges) + "\n")
+    print(f"{len(merges)} fusions BPE", flush=True)
 
 with open(os.path.join(OUT_DIR, "nllb_vocab.tsv"), "w", encoding="utf-8", newline="\n") as f:
     for piece, score in table:
@@ -179,6 +199,8 @@ with open(os.path.join(OUT_DIR, "nllb_config.txt"), "w", encoding="utf-8", newli
     f.write(f"decoder_start_id={start_id}\n")
     f.write(f"src_lang_id={src_id}\n")
     f.write(f"tgt_lang_id={tgt_id}\n")
+    f.write("tokenizer=" + ("bpe" if kind == "BPE" else "unigram") + "\n")
+    f.write("ignore_merges=" + str(bool(model_json.get("ignore_merges", False))).lower() + "\n")
     f.write("specials=" + ",".join(str(i) for i in sorted(specials)) + "\n")
 
 

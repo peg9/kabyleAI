@@ -1,3 +1,5 @@
+import com.kabyleai.app.BpeTokenizer;
+import com.kabyleai.app.Tokenizer;
 import com.kabyleai.app.UnigramTokenizer;
 
 import java.io.File;
@@ -20,9 +22,15 @@ import java.util.Set;
 public class TokenizerCheck {
     public static void main(String[] args) throws Exception {
         int unk = 3;
+        String kind = "unigram";
+        boolean ignoreMerges = false;
         Set<Integer> specials = new HashSet<>();
         for (String line : Files.readAllLines(Paths.get(args[0]), StandardCharsets.UTF_8)) {
-            if (line.startsWith("unk_id=")) {
+            if (line.startsWith("tokenizer=")) {
+                kind = line.substring(10).trim();
+            } else if (line.startsWith("ignore_merges=")) {
+                ignoreMerges = Boolean.parseBoolean(line.substring(14).trim());
+            } else if (line.startsWith("unk_id=")) {
                 unk = Integer.parseInt(line.substring(7).trim());
             } else if (line.startsWith("specials=")) {
                 for (String part : line.substring(9).split(",")) {
@@ -32,7 +40,12 @@ public class TokenizerCheck {
                 }
             }
         }
-        UnigramTokenizer tokenizer = new UnigramTokenizer(new File(args[1]), specials, unk);
+        File vocab = new File(args[1]);
+        Tokenizer tokenizer = "bpe".equals(kind)
+                ? new BpeTokenizer(vocab, new File(vocab.getParentFile(), "nllb_merges.txt"),
+                        specials, unk, ignoreMerges)
+                : new UnigramTokenizer(vocab, specials, unk);
+        System.out.println("tokenizer : " + kind);
 
         List<String> lines = Files.readAllLines(Paths.get(args[2]), StandardCharsets.UTF_8);
         int same = 0;

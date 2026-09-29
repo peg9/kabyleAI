@@ -24,7 +24,7 @@ import java.util.Set;
  * SentencePiece ; tools/nllb/TokenizerCheck.java compare le résultat au
  * tokenizer Hugging Face.
  */
-public final class UnigramTokenizer {
+public final class UnigramTokenizer implements Tokenizer {
 
     private static final char SPACE_MARK = '▁';
     private static final float UNK_PENALTY = 10.0f;
@@ -81,7 +81,7 @@ public final class UnigramTokenizer {
         return pieces.length;
     }
 
-    /** Texte -> identifiants de jetons, sans jetons spéciaux. */
+    @Override
     public int[] encode(String text) {
         int[] chars = normalize(text);
         int n = chars.length;
@@ -151,7 +151,7 @@ public final class UnigramTokenizer {
         return result;
     }
 
-    /** Identifiants -> texte ; les jetons spéciaux sont ignorés. */
+    @Override
     public String decode(int[] ids) {
         StringBuilder out = new StringBuilder();
         for (int id : ids) {
