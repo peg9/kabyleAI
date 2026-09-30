@@ -28,7 +28,7 @@ Tous les modèles s'exécutent sur le téléphone avec ONNX Runtime (bibliothèq
 
 Fichiers : `MatoubTts.kt`, `MatoubTokenizer.kt`, `TtsTextCleaner.java`.
 
-1. **Nettoyage** (`TtsTextCleaner`) : normalisation Unicode, minuscules, `ε` et `γ` grecs ramenés à `ɛ` et `ɣ`, lettres accentuées du français ramenées à leur lettre de base, chiffres et symboles ignorés. Sans cela, `MatoubTokenizer` lève une exception dès qu'il rencontre un caractère inconnu.
+1. **Nettoyage** (`TtsTextCleaner`) : normalisation Unicode, minuscules, `ε` et `γ` grecs ramenés à `ɛ` et `ɣ`, lettres accentuées du français ramenées à leur lettre de base, chiffres et symboles ignorés (sans message). Sans cela, `MatoubTokenizer` lève une exception dès qu'il rencontre un caractère inconnu.
 2. **Phonétisation** (`MatoubTokenizer`) : le kabyle est converti en symboles phonétiques. Le code traite les consonnes emphatiques, la spirantisation de `b d g k t`, les géminées, l'assimilation des nasales et le timbre de `a` près des consonnes d'arrière (emphatiques, `q`, `ɣ`, `x`). Les identifiants sont encadrés par le symbole `$` à chaque bout.
 3. **Premier graphe** (`matoub_front.onnx`) : prédit, pour chaque symbole, le nombre de trames audio.
 4. **Alignement** : l'application construit la matrice symboles × trames (des 1 sur les trames de chaque symbole).

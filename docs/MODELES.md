@@ -206,7 +206,7 @@ Faites de même pour `matoub` et `fadhma`, puis supprimez `/data/local/tmp/nllb`
 ## Vérifier dans l'application
 
 - **Kabyle → Audio** : écrivez `Hemleɣ-k aṭas` et appuyez sur « Lire en kabyle ». Une erreur `Modèle Matoub introuvable` ou `vocab.json introuvable` indique un fichier manquant dans `files/matoub/`.
-- **Français → Kabyle** : écrivez une phrase et appuyez sur « Traduire en kabyle ». Le message `Modèle de traduction absent` indique qu'un des fichiers `nllb_*` manque. Le premier appel charge trois modèles et un vocabulaire de plus de 500 000 fusions : il est plus long que les suivants. Le temps de la traduction s'affiche dans l'état.
+- **Français → Kabyle** : écrivez une phrase et appuyez sur « Traduire en kabyle », puis sur « Lire » pour l'entendre. Le message `Modèle de traduction absent` indique qu'un des fichiers `nllb_*` manque. Le premier appel charge trois modèles et un vocabulaire de plus de 500 000 fusions : il est plus long que les suivants. Le temps de la traduction s'affiche dans l'état.
 - **Audio → Kabyle** : appuyez sur « Parler en kabyle », parlez, puis « Arrêter ». `Modele Fadhma introuvable` indique un fichier manquant dans `files/fadhma/`.
 
 ## Problèmes fréquents

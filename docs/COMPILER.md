@@ -124,13 +124,31 @@ sdk.dir=C\:\\Users\\VotreNom\\AppData\\Local\\Android\\Sdk
 
 C'est la méthode que l'auteur utilise. Elle demande un téléphone Android avec [Termux](https://termux.dev) (version F-Droid) et de la place : comptez plusieurs Go pour l'outillage de compilation.
 
-Ce qui est établi par l'usage :
+Configuration relevée sur le téléphone de l'auteur :
 
-- `gradle :app:assembleDebug` compile l'application dans Termux.
-- `gradle.properties` pointe vers `aapt2` de Termux, `/data/data/com.termux/files/usr/bin/aapt2` : c'est le rôle de la ligne décrite plus haut.
+| Élément | Valeur |
+|---|---|
+| Gradle | 9.8.0 (paquet Termux `gradle`) |
+| JDK | OpenJDK 21.0.12 (paquet `openjdk-21` ; `openjdk-17` est aussi installé) |
+| `aapt2` | 16.0.0.4-2 (paquet Termux `aapt2`, avec `aapt`) |
+| Outils ADB | paquet `android-tools` |
+| SDK Android | dossier `~/android-sdk`, déclaré dans `local.properties` par `sdk.dir=/data/data/com.termux/files/home/android-sdk` |
+| `ANDROID_HOME` | non défini |
+
+Les paquets s'installent avec :
+
+```bash
+pkg install openjdk-21 gradle aapt2 aapt android-tools
+```
+
+Cette commande est reconstituée à partir de la liste des paquets installés : elle n'a pas été rejouée depuis une installation vierge.
+
+Points à connaître :
+
+- `gradle :app:assembleDebug` compile l'application. Le plugin Android 8.7.3 est documenté pour Gradle 8.9 ; la compilation a pourtant fonctionné avec Gradle 9.8.0 sur ce téléphone. Sur un PC, restez sur Gradle 8.10.2.
+- La ligne `android.aapt2FromMavenOverride` de `gradle.properties` remplace l'`aapt2` du SDK (un programme pour PC, qui ne s'exécute pas sur Android) par celui de Termux.
+- Le SDK Android n'est pas installé par un paquet Termux. Sa provenance et son contenu exact (plateforme `android-35`, `build-tools`) ne sont pas relevés ici : à compléter par l'auteur avec la sortie de `ls ~/android-sdk ~/android-sdk/platforms ~/android-sdk/build-tools`.
 - Le script `build_install.sh` compile, installe l'APK avec `su -c "pm install -r ..."` (téléphone rooté), copie les modèles et lance l'application.
-
-À compléter par l'auteur : les paquets Termux et le SDK Android exacts utilisés (JDK 21, Gradle, `aapt2`, plateforme Android 35, emplacement du SDK). Cette information n'est pas dans le dépôt, et je ne l'ai pas reconstituée pour ne pas écrire une procédure inexacte.
 
 Utilisation du script :
 

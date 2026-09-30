@@ -6,7 +6,7 @@ Application Android pour le kabyle qui fonctionne sans connexion internet : trad
 
 | Écran | Modèle | Rôle |
 |---|---|---|
-| Français → Kabyle | NLLB-200 (600M distillé) | Traduit un texte, puis le lit si on appuie sur « Lire la traduction » |
+| Français → Kabyle | NLLB-200 (600M distillé) | Traduit un texte ; le bouton « Lire » envoie la traduction à Matoub, « Copier » la copie |
 | Kabyle → Audio | Matoub-82M | Synthèse vocale, audio 24 kHz |
 | Audio → Kabyle | Fadhma-300M | Reconnaissance vocale sur une fenêtre de 4 secondes |
 
@@ -56,7 +56,7 @@ Les autres scripts à la racine (`matoub_*.sh`, `test_matoub_*.py`, `connect_mat
 - La qualité du kabyle produit par NLLB est inégale : la structure des phrases est souvent correcte, mais le vocabulaire peut être faux. L'écran affiche « à relire » pour cette raison.
 - Le décodeur de traduction n'a pas de cache d'attention (KV cache) : il est rejoué en entier à chaque mot généré. Les phrases longues sont lentes.
 - La reconnaissance vocale Fadhma travaille sur une fenêtre fixe de 4 secondes (64 000 échantillons à 16 kHz).
-- Les chiffres et les symboles ne sont pas prononcés par la synthèse vocale : ils sont ignorés, et l'écran le signale.
+- Les chiffres et les symboles ne sont pas prononcés par la synthèse vocale : ils sont ignorés.
 - Les modèles occupent plusieurs centaines de Mo, et l'export de NLLB demande de la mémoire vive et environ 5 Go de disque libre.
 
 ## Modèles et licences
