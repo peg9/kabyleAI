@@ -5,11 +5,14 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -27,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
 
@@ -57,6 +61,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        BundledModelFiles.ensureMatoubVocab(this)
 
         try {
             ortEnvironment = OrtEnvironment.getEnvironment()
@@ -521,6 +527,88 @@ fun KabyleAIApp(
         mutableStateOf("Prêt")
     }
 
+    var importing by remember {
+        mutableStateOf(false)
+    }
+
+    var importFraction by remember {
+        mutableStateOf(0f)
+    }
+
+    var importText by remember {
+        mutableStateOf("")
+    }
+
+    var modelStatus by remember {
+        mutableStateOf(ModelCatalog.summary(context.filesDir))
+    }
+
+    val cancelImport = remember {
+        AtomicBoolean(false)
+    }
+
+    val startImport: (ModelSource) -> Unit = { source ->
+
+        if (!importing) {
+
+            importing = true
+            importFraction = 0f
+            importText = "Préparation..."
+            cancelImport.set(false)
+
+            (context as? Activity)?.window?.addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+
+            thread {
+
+                val report = ModelImporter.importFrom(
+                    source,
+                    context.filesDir,
+                    ModelImporter.ProgressListener { fraction, message ->
+                        mainHandler.post {
+                            importFraction = fraction
+                            importText = message
+                        }
+                    },
+                    cancelImport
+                )
+
+                BundledModelFiles.ensureMatoubVocab(context)
+
+                mainHandler.post {
+                    importing = false
+                    modelStatus = ModelCatalog.summary(context.filesDir)
+                    status = report.message
+
+                    (context as? Activity)?.window?.clearFlags(
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    )
+                }
+            }
+        }
+    }
+
+    val folderLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocumentTree()
+        ) { uri: Uri? ->
+
+            if (uri != null) {
+                startImport(SafModelSource.ofFolder(context, uri))
+            }
+        }
+
+    val filesLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenMultipleDocuments()
+        ) { uris: List<Uri> ->
+
+            if (uris.isNotEmpty()) {
+                startImport(SafModelSource.ofFiles(context, uris))
+            }
+        }
+
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -601,7 +689,7 @@ fun KabyleAIApp(
                         } else if (!translator.isInstalled()) {
 
                             status =
-                                "Modèle de traduction absent : installez-le avec build_install.sh"
+                                "Modèle de traduction absent : utilisez « Importer les modèles » en bas de l'écran"
 
                         } else {
 
@@ -941,6 +1029,81 @@ fun KabyleAIApp(
                         Text("Texte reconnu")
                     }
                 )
+
+                HorizontalDivider()
+
+                Text(
+                    text = "Modèles",
+                    style =
+                        MaterialTheme.typography.titleLarge
+                )
+
+                Text(
+                    text = modelStatus,
+                    style =
+                        MaterialTheme.typography.bodyMedium
+                )
+
+                if (importing) {
+
+                    LinearProgressIndicator(
+                        progress = { importFraction },
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = importText,
+                        style =
+                            MaterialTheme.typography.bodySmall
+                    )
+
+                    OutlinedButton(
+                        onClick = {
+                            cancelImport.set(true)
+                            importText = "Annulation..."
+                        },
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    ) {
+                        Text("Annuler l'import")
+                    }
+
+                } else {
+
+                    Button(
+                        onClick = {
+                            folderLauncher.launch(null)
+                        },
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    ) {
+                        Text("Importer les modèles (dossier)")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            filesLauncher.launch(arrayOf("*/*"))
+                        },
+                        modifier =
+                            Modifier.fillMaxWidth()
+                    ) {
+                        Text("Importer des fichiers...")
+                    }
+
+                    Text(
+                        text =
+                            "Choisissez le dossier qui contient les fichiers " +
+                            "exportés (nllb_*.onnx, matoub_*.onnx, " +
+                            "fadhma_300m_prepared.onnx...). Depuis Android 11, " +
+                            "le dossier Download lui-même est refusé : mettez " +
+                            "les fichiers dans un sous-dossier, ou utilisez " +
+                            "« Importer des fichiers ». Si la traduction a déjà " +
+                            "servi, relancez l'application après l'import.",
+                        style =
+                            MaterialTheme.typography.bodySmall
+                    )
+                }
 
                 Text(
                     text = "État : $status",
