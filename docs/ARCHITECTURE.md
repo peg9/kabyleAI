@@ -94,7 +94,7 @@ Les modèles d'origine ne s'exportent pas tels quels en ONNX avec une longueur d
 | Export NLLB | Boucle gloutonne ONNX comparée à `generate()` de PyTorch, sur le vrai modèle | 6 sur 6 identiques |
 | `TtsTextCleaner` | 5 000 chaînes aléatoires : la sortie ne contient que des caractères pris en charge | Vérifié |
 | `ModelImporter`, `ModelCatalog` | Test JVM : import complet, doublons, fichiers inconnus, embeddings de mauvaise taille, `nllb_merges.txt` absent, annulation, place insuffisante, erreur de lecture, taille annoncée fausse, remplacement d'un fichier de 20 Mo | 17 contrôles sur 17 |
-| `CorrectionStore` | Test JVM : ajout, doublon identique, remplacement, tabulation et saut de ligne dans le texte, champs vides, export, caractères kabyles | 12 contrôles sur 12 |
+| `CorrectionStore` | Test JVM : ajout, doublon identique, remplacement, tabulation et saut de ligne dans le texte, champs vides, export, caractères kabyles | 10 contrôles sur 10 |
 | Écran d'import, `SafModelSource` | Compilation des classes Java contre Android 15 ; typage du Kotlin contre des déclarations factices de Compose | Compile ; jamais exécuté sur téléphone |
 
 Le petit modèle M2M100 aléatoire et le banc d'essai JVM ne sont pas dans le dépôt.
