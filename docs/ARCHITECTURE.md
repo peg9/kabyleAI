@@ -54,6 +54,12 @@ Fichier : `MainActivity.kt`.
 
 L'enregistrement est écrit en WAV 16 bits, mono, 16 kHz. Le modèle prend une fenêtre fixe de 64 000 échantillons (4 secondes) et produit des scores pour un vocabulaire de 40 symboles. Comme pour Matoub avant sa réécriture, la taille d'entrée figée est une limite connue.
 
+## Corrections de traduction
+
+Le champ « Traduction kabyle » est modifiable. « Enregistrer la correction » ajoute la ligne (français, kabyle corrigé, kabyle proposé par le modèle, date) à `files/corrections.tsv`, via `CorrectionStore`. Une même phrase française n'apparaît qu'une fois : une nouvelle correction remplace l'ancienne. Les tabulations et sauts de ligne sont remplacés par des espaces. L'écriture passe par un fichier provisoire renommé ensuite. « Exporter » écrit le fichier, avec une ligne d'en-tête, à l'endroit choisi dans le sélecteur de fichiers Android (`corrections_kabyle.tsv`).
+
+Ce fichier est fait pour un affinage de NLLB, qui n'est pas encore écrit. Avec seulement quelques dizaines de paires, un affinage risque de dégrader le modèle plutôt que de l'améliorer : comptez plusieurs centaines de phrases variées et relues.
+
 ## Import des modèles
 
 Les modèles pèsent plusieurs centaines de Mo et l'application les lit dans son dossier privé `files/`, inaccessible sans root. L'écran « Modèles » les y copie depuis un dossier ou des fichiers choisis par l'utilisateur, avec le sélecteur de fichiers Android (Storage Access Framework), sans permission de stockage.
@@ -88,6 +94,7 @@ Les modèles d'origine ne s'exportent pas tels quels en ONNX avec une longueur d
 | Export NLLB | Boucle gloutonne ONNX comparée à `generate()` de PyTorch, sur le vrai modèle | 6 sur 6 identiques |
 | `TtsTextCleaner` | 5 000 chaînes aléatoires : la sortie ne contient que des caractères pris en charge | Vérifié |
 | `ModelImporter`, `ModelCatalog` | Test JVM : import complet, doublons, fichiers inconnus, embeddings de mauvaise taille, `nllb_merges.txt` absent, annulation, place insuffisante, erreur de lecture, taille annoncée fausse, remplacement d'un fichier de 20 Mo | 17 contrôles sur 17 |
+| `CorrectionStore` | Test JVM : ajout, doublon identique, remplacement, tabulation et saut de ligne dans le texte, champs vides, export, caractères kabyles | 12 contrôles sur 12 |
 | Écran d'import, `SafModelSource` | Compilation des classes Java contre Android 15 ; typage du Kotlin contre des déclarations factices de Compose | Compile ; jamais exécuté sur téléphone |
 
 Le petit modèle M2M100 aléatoire et le banc d'essai JVM ne sont pas dans le dépôt.

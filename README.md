@@ -9,6 +9,7 @@ Application Android pour le kabyle qui fonctionne sans connexion internet : trad
 | Français → Kabyle | NLLB-200 (600M distillé) | Traduit un texte ; le bouton « Lire » envoie la traduction à Matoub, « Copier » la copie |
 | Kabyle → Audio | Matoub-82M | Synthèse vocale, audio 24 kHz |
 | Audio → Kabyle | Fadhma-300M | Reconnaissance vocale sur une fenêtre de 4 secondes |
+| Corrections | | « Enregistrer la correction » garde les paires (français, kabyle corrigé) dans `corrections.tsv` ; « Exporter » les envoie vers un fichier, pour un affinage ultérieur de NLLB |
 | Modèles | | Import des fichiers exportés depuis la mémoire du téléphone, état de chaque modèle (complet, absent, incomplet) |
 
 ## État du projet
@@ -41,6 +42,7 @@ app/                       Application Android (Kotlin, Java, Jetpack Compose)
     NllbTranslator.java    Traduction (NLLB, trois graphes ONNX)
     BpeTokenizer.java      Tokenizer SentencePiece de type BPE
     UnigramTokenizer.java  Tokenizer SentencePiece de type Unigram
+    CorrectionStore.java   Paires français-kabyle corrigées (fichier TSV)
     ModelCatalog.java      Liste des fichiers attendus et vérification des modèles installés
     ModelImporter.java     Copie des modèles avec progression, annulation et contrôle de taille
     ModelSource.java       Origine des fichiers à importer (interface)
@@ -80,5 +82,5 @@ Le code de ce dépôt n'a pas encore de licence : à choisir et à ajouter dans 
 Ces points ne sont pas implémentés :
 
 - Cache d'attention pour accélérer la traduction.
-- Bouton « Enregistrer la correction » dans l'application, puis affinage de NLLB sur des paires français-kabyle corrigées.
+- Affinage de NLLB sur les paires exportées par « Exporter » (script à écrire, une fois quelques centaines de paires réunies).
 - Wrapper Gradle commité, pour compiler avec `./gradlew` sur toutes les machines.

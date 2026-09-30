@@ -511,6 +511,18 @@ fun KabyleAIApp(
         mutableStateOf(false)
     }
 
+    var modelOutput by remember {
+        mutableStateOf("")
+    }
+
+    val correctionsFile = remember {
+        File(context.filesDir, "corrections.tsv")
+    }
+
+    var correctionCount by remember {
+        mutableStateOf(CorrectionStore.count(correctionsFile))
+    }
+
     var text by remember {
         mutableStateOf("Hemleɣ-k aṭas")
     }
@@ -588,6 +600,26 @@ fun KabyleAIApp(
             }
         }
     }
+
+    val exportLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("text/tab-separated-values")
+        ) { uri: Uri? ->
+
+            if (uri != null) {
+                thread {
+                    val message = try {
+                        val stream = context.contentResolver.openOutputStream(uri)
+                            ?: throw java.io.IOException("destination illisible")
+                        val n = stream.use { CorrectionStore.export(correctionsFile, it) }
+                        "$n correction(s) exportée(s)"
+                    } catch (e: Exception) {
+                        "Export impossible : ${e.message}"
+                    }
+                    mainHandler.post { status = message }
+                }
+            }
+        }
 
     val folderLauncher =
         rememberLauncherForActivityResult(
@@ -708,6 +740,7 @@ fun KabyleAIApp(
 
                                     mainHandler.post {
                                         translation = result
+                                        modelOutput = result
                                         translating = false
                                         status =
                                             "Traduction terminée ($seconds s)"
@@ -818,6 +851,78 @@ fun KabyleAIApp(
                     ) {
 
                         Text("Copier")
+                    }
+                }
+
+                Row(
+                    horizontalArrangement =
+                        Arrangement.spacedBy(10.dp),
+                    modifier =
+                        Modifier.fillMaxWidth()
+                ) {
+
+                    OutlinedButton(
+
+                        onClick = {
+
+                            if (french.isBlank() || translation.isBlank()) {
+
+                                status = "Traduisez et corrigez d'abord"
+
+                            } else {
+
+                                val fr = french
+                                val original = modelOutput
+                                val corrected = translation
+
+                                thread {
+
+                                    val message = try {
+                                        when (CorrectionStore.save(
+                                            correctionsFile, fr, original, corrected
+                                        )) {
+                                            CorrectionStore.Result.ADDED ->
+                                                "Correction enregistrée"
+                                            CorrectionStore.Result.UPDATED ->
+                                                "Correction mise à jour"
+                                            CorrectionStore.Result.UNCHANGED ->
+                                                "Déjà enregistrée"
+                                            else ->
+                                                "Rien à enregistrer"
+                                        }
+                                    } catch (e: Exception) {
+                                        "Enregistrement impossible : ${e.message}"
+                                    }
+
+                                    mainHandler.post {
+                                        correctionCount =
+                                            CorrectionStore.count(correctionsFile)
+                                        status = message
+                                    }
+                                }
+                            }
+                        },
+
+                        modifier =
+                            Modifier.weight(1f)
+                    ) {
+
+                        Text("Enregistrer la correction")
+                    }
+
+                    OutlinedButton(
+
+                        enabled = correctionCount > 0,
+
+                        onClick = {
+                            exportLauncher.launch("corrections_kabyle.tsv")
+                        },
+
+                        modifier =
+                            Modifier.weight(1f)
+                    ) {
+
+                        Text("Exporter ($correctionCount)")
                     }
                 }
 
