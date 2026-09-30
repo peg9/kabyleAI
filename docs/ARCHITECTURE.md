@@ -54,6 +54,20 @@ Fichier : `MainActivity.kt`.
 
 L'enregistrement est écrit en WAV 16 bits, mono, 16 kHz. Le modèle prend une fenêtre fixe de 64 000 échantillons (4 secondes) et produit des scores pour un vocabulaire de 40 symboles. Comme pour Matoub avant sa réécriture, la taille d'entrée figée est une limite connue.
 
+## Import des modèles
+
+Les modèles pèsent plusieurs centaines de Mo et l'application les lit dans son dossier privé `files/`, inaccessible sans root. L'écran « Modèles » les y copie depuis un dossier ou des fichiers choisis par l'utilisateur, avec le sélecteur de fichiers Android (Storage Access Framework), sans permission de stockage.
+
+| Classe | Rôle |
+|---|---|
+| `ModelCatalog` | Fichiers attendus par modèle (Matoub, NLLB, Fadhma) et vérification de ce qui est installé : présence, fichiers vides, tailles des tables d'embeddings de NLLB. `nllb_merges.txt` n'est exigé que si `nllb_config.txt` déclare un tokenizer BPE |
+| `ModelSource` | Interface : liste de fichiers (nom, taille, flux de lecture) |
+| `SafModelSource` | Implémentation Android : parcourt un dossier choisi (quatre niveaux au plus) ou lit une liste de fichiers |
+| `ModelImporter` | Copie par blocs de 1 Mo vers `nom.part`, contrôle de taille, renommage, progression toutes les 200 ms, annulation, contrôle de la place libre |
+| `BundledModelFiles` | Copie `vocab.json` de Matoub depuis les assets de l'APK vers `files/matoub/` |
+
+La copie tourne dans un thread, l'écran met à jour la barre depuis le thread principal. Seules `SafModelSource` et `BundledModelFiles` dépendent d'Android : les trois autres classes se testent sur une simple JVM.
+
 ## Pourquoi les exports sont découpés
 
 Les modèles d'origine ne s'exportent pas tels quels en ONNX avec une longueur de texte variable. Quatre obstacles ont été rencontrés, et les scripts d'export les contournent :
@@ -73,10 +87,12 @@ Les modèles d'origine ne s'exportent pas tels quels en ONNX avec une longueur d
 | Export Matoub | Longueurs ONNX comparées à PyTorch pour 7 longueurs, sur le vrai modèle | Identiques |
 | Export NLLB | Boucle gloutonne ONNX comparée à `generate()` de PyTorch, sur le vrai modèle | 6 sur 6 identiques |
 | `TtsTextCleaner` | 5 000 chaînes aléatoires : la sortie ne contient que des caractères pris en charge | Vérifié |
+| `ModelImporter`, `ModelCatalog` | Test JVM : import complet, doublons, fichiers inconnus, embeddings de mauvaise taille, `nllb_merges.txt` absent, annulation, place insuffisante, erreur de lecture, taille annoncée fausse, remplacement d'un fichier de 20 Mo | 17 contrôles sur 17 |
+| Écran d'import, `SafModelSource` | Compilation des classes Java contre Android 15 ; typage du Kotlin contre des déclarations factices de Compose | Compile ; jamais exécuté sur téléphone |
 
 Le petit modèle M2M100 aléatoire et le banc d'essai JVM ne sont pas dans le dépôt.
 
-Ce qui n'a pas été vérifié : la compilation sur Linux et Windows, la qualité de la voix de Matoub mesurée autrement qu'à l'écoute, l'effet exact de la quantification int8 sur la qualité du kabyle de NLLB, et le temps de traduction sur d'autres téléphones que celui de l'auteur.
+Ce qui n'a pas été vérifié : la compilation réelle de l'écran d'import avec Compose, le sélecteur de fichiers sur un vrai téléphone, la compilation sur Linux et Windows, la qualité de la voix de Matoub mesurée autrement qu'à l'écoute, l'effet exact de la quantification int8 sur la qualité du kabyle de NLLB, et le temps de traduction sur d'autres téléphones que celui de l'auteur.
 
 ## Scripts historiques
 

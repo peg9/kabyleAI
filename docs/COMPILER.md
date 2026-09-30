@@ -160,7 +160,7 @@ cd ~/projects/KabyleAI
 SKIP_BUILD=1 ./build_install.sh "" <dossier_nllb>    # copie les modèles sans recompiler
 ```
 
-Sans root, le script ouvre l'installateur Android avec `termux-open` et s'arrête : les modèles doivent alors être copiés autrement (voir [MODELES.md](MODELES.md)).
+Sans root, le script ouvre l'installateur Android avec `termux-open` et s'arrête : les modèles s'installent ensuite depuis l'application, avec le bouton « Importer les modèles » (voir [MODELES.md](MODELES.md)).
 
 ## Installer l'APK sur un téléphone
 
@@ -179,7 +179,7 @@ Sous Windows : `& "$env:ANDROID_HOME\platform-tools\adb.exe" install -r app\buil
 
 Copiez `app-debug.apk` sur le téléphone, ouvrez-le depuis un gestionnaire de fichiers et autorisez l'installation depuis cette source.
 
-L'application vide n'affiche que des messages d'erreur tant que les modèles ne sont pas installés : passez ensuite à [MODELES.md](MODELES.md).
+L'application vide n'affiche que des messages d'erreur tant que les modèles ne sont pas installés : passez ensuite à [MODELES.md](MODELES.md), qui décrit aussi l'import depuis l'application.
 
 ## Dépannage
 

@@ -10,7 +10,7 @@ Les modèles ne sont pas dans le dépôt. Chacun doit être exporté au format O
 | Français → Kabyle | NLLB-200 distillé 600M | `export_nllb_onnx.py` | `files/nllb/` |
 | Audio → Kabyle | Fadhma-300M | non fourni | `files/fadhma/` |
 
-`files/` désigne `/data/data/com.kabyleai.app/files/`. L'application y lit les modèles avec `File(filesDir, ...)` : c'est un dossier privé, accessible avec root, ou avec `adb run-as` sur une version de débogage.
+`files/` désigne `/data/data/com.kabyleai.app/files/`. L'application y lit les modèles avec `File(filesDir, ...)` : c'est un dossier privé, inaccessible aux autres applications. Trois façons d'y placer les modèles : le bouton « Importer les modèles » de l'application (sans root, recommandé), `build_install.sh` (root), ou `adb run-as` (version de débogage).
 
 Fichiers attendus :
 
@@ -171,6 +171,27 @@ Le modèle n'est pas fourni et son script de préparation n'est pas dans le dép
 
 ## Copier les modèles sur le téléphone
 
+### Sans root : import depuis l'application
+
+C'est la méthode la plus simple, elle marche sur tout téléphone.
+
+1. Placez les fichiers exportés dans la mémoire du téléphone (Termux : `cp ~/kabyle-models/nllb/* ~/storage/downloads/kabyle/`, ou transfert USB). Tous les fichiers peuvent être dans un seul dossier, ou dans des sous-dossiers : l'application les reconnaît par leur nom, à quatre niveaux de profondeur au plus.
+2. Dans l'application, section « Modèles » en bas de l'écran, appuyez sur « Importer les modèles (dossier) » et choisissez le dossier. Depuis Android 11, le dossier `Download` lui-même est refusé par le sélecteur : créez un sous-dossier, ou utilisez « Importer des fichiers... » et cochez les fichiers.
+3. Une barre de progression suit la copie (les fichiers pèsent plusieurs centaines de Mo, l'écran reste allumé). « Annuler l'import » interrompt et supprime le fichier en cours. Chaque fichier est copié sous un nom provisoire `.part`, renommé seulement quand sa taille est correcte : une copie coupée ne laisse pas de fichier tronqué.
+4. Le résultat s'affiche à la fin : pour chaque modèle, « complet », « absent » ou « incomplet, manque ... ».
+
+Fichiers attendus :
+
+| Modèle | Fichiers |
+|---|---|
+| Matoub | `matoub_front.onnx`, `matoub_back.onnx` (`vocab.json` est livré dans l'APK et copié automatiquement) |
+| NLLB | `nllb_config.txt`, `nllb_vocab.tsv`, `nllb_embed.i8`, `nllb_embed.scales`, `nllb_encoder.onnx`, `nllb_decoder.onnx`, `nllb_head.onnx`, et `nllb_merges.txt` quand la configuration indique un tokenizer BPE (c'est le cas de NLLB) |
+| Fadhma | `fadhma_300m_prepared.onnx` |
+
+Contrôles faits à l'import : place libre suffisante (taille des fichiers plus 64 Mo), taille copiée égale à la taille annoncée, fichiers non vides, et pour NLLB `nllb_embed.i8` égal à `vocab_size × d_model` octets, `nllb_embed.scales` à `4 × vocab_size`. Les fichiers non reconnus sont ignorés, et si un nom apparaît deux fois, le premier trouvé est gardé. Un import remplace les fichiers déjà installés du même nom. Si la traduction a déjà servi dans la session, relancez l'application pour qu'elle recharge les nouveaux fichiers.
+
+Non vérifié : le comportement du sélecteur de fichiers sur les différentes versions d'Android, et la vitesse de copie sur un téléphone réel. Les classes de copie et de vérification ont été testées sur PC, l'écran n'a pas été compilé dans l'environnement de rédaction.
+
 ### Téléphone rooté, avec Termux
 
 `build_install.sh` copie les fichiers, corrige le propriétaire (`chown`) et le contexte SELinux (`restorecon`) :
@@ -180,17 +201,13 @@ Le modèle n'est pas fourni et son script de préparation n'est pas dans le dép
 SKIP_BUILD=1 ./build_install.sh "" ~/kabyle-models/nllb      # NLLB seul, sans recompiler
 ```
 
-Le script ne copie pas `vocab.json` de Matoub : copiez-le une fois à la main (le dossier `files/matoub/` doit exister) :
-
-```bash
-su -c "cp ~/projects/KabyleAI/app/src/main/assets/matoub/vocab.json /data/data/com.kabyleai.app/files/matoub/"
-```
+Le script ne copie pas `vocab.json` de Matoub : l'application le recopie toute seule depuis l'APK au lancement.
 
 Vérifiez aussi que le propriétaire est celui de l'application : `su -c "ls -ln /data/data/com.kabyleai.app/files/matoub"`.
 
-### Téléphone non rooté (ADB et `run-as`)
+### Sans root : ADB et `run-as` (alternative)
 
-Cette méthode n'a pas été testée. Elle suppose une version de débogage de l'application (c'est le cas de `assembleDebug`) :
+À utiliser si l'import depuis l'application ne convient pas. Cette méthode n'a pas été testée. Elle suppose une version de débogage de l'application (c'est le cas de `assembleDebug`) :
 
 ```bash
 adb push ~/kabyle-models/nllb /data/local/tmp/nllb
@@ -205,8 +222,9 @@ Faites de même pour `matoub` et `fadhma`, puis supprimez `/data/local/tmp/nllb`
 
 ## Vérifier dans l'application
 
+- **Modèles** : la section en bas de l'écran liste l'état de chaque modèle. Les trois doivent être « complet ».
 - **Kabyle → Audio** : écrivez `Hemleɣ-k aṭas` et appuyez sur « Lire en kabyle ». Une erreur `Modèle Matoub introuvable` ou `vocab.json introuvable` indique un fichier manquant dans `files/matoub/`.
-- **Français → Kabyle** : écrivez une phrase et appuyez sur « Traduire en kabyle », puis sur « Lire » pour l'entendre. Le message `Modèle de traduction absent` indique qu'un des fichiers `nllb_*` manque. Le premier appel charge trois modèles et un vocabulaire de plus de 500 000 fusions : il est plus long que les suivants. Le temps de la traduction s'affiche dans l'état.
+- **Français → Kabyle** : écrivez une phrase et appuyez sur « Traduire en kabyle », puis sur « Lire » pour l'entendre. Le message `Modèle de traduction absent` (utilisez « Importer les modèles ») indique qu'un des fichiers `nllb_*` manque. Le premier appel charge trois modèles et un vocabulaire de plus de 500 000 fusions : il est plus long que les suivants. Le temps de la traduction s'affiche dans l'état.
 - **Audio → Kabyle** : appuyez sur « Parler en kabyle », parlez, puis « Arrêter ». `Modele Fadhma introuvable` indique un fichier manquant dans `files/fadhma/`.
 
 ## Problèmes fréquents

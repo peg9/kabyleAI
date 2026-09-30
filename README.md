@@ -9,6 +9,7 @@ Application Android pour le kabyle qui fonctionne sans connexion internet : trad
 | Français → Kabyle | NLLB-200 (600M distillé) | Traduit un texte ; le bouton « Lire » envoie la traduction à Matoub, « Copier » la copie |
 | Kabyle → Audio | Matoub-82M | Synthèse vocale, audio 24 kHz |
 | Audio → Kabyle | Fadhma-300M | Reconnaissance vocale sur une fenêtre de 4 secondes |
+| Modèles | | Import des fichiers exportés depuis la mémoire du téléphone, état de chaque modèle (complet, absent, incomplet) |
 
 ## État du projet
 
@@ -20,7 +21,7 @@ Application Android pour le kabyle qui fonctionne sans connexion internet : trad
 
 1. **Compiler l'application** : [docs/COMPILER.md](docs/COMPILER.md) (Linux, Windows, Termux).
 2. **Préparer les modèles** : ils ne sont pas dans le dépôt, il faut les exporter au format ONNX. [docs/MODELES.md](docs/MODELES.md) décrit chaque export.
-3. **Installer** l'APK et copier les modèles dans le dossier privé de l'application. Sur un téléphone rooté, `build_install.sh` fait les trois en une commande.
+3. **Installer** l'APK et les modèles. Sur un téléphone rooté, `build_install.sh` fait tout en une commande. Sur un téléphone non rooté, installez l'APK, copiez le dossier des modèles exportés dans la mémoire du téléphone, puis appuyez sur « Importer les modèles » dans l'application : elle copie les fichiers avec une barre de progression et vérifie qu'ils sont tous là.
 
 ## Documentation
 
@@ -40,6 +41,11 @@ app/                       Application Android (Kotlin, Java, Jetpack Compose)
     NllbTranslator.java    Traduction (NLLB, trois graphes ONNX)
     BpeTokenizer.java      Tokenizer SentencePiece de type BPE
     UnigramTokenizer.java  Tokenizer SentencePiece de type Unigram
+    ModelCatalog.java      Liste des fichiers attendus et vérification des modèles installés
+    ModelImporter.java     Copie des modèles avec progression, annulation et contrôle de taille
+    ModelSource.java       Origine des fichiers à importer (interface)
+    SafModelSource.java    Origine : sélecteur de fichiers Android (dossier ou fichiers)
+    BundledModelFiles.java Copie de vocab.json (livré dans l'APK) vers le dossier des modèles
   src/main/assets/matoub/  vocab.json de Matoub
 export_matoub_onnx.py      Export de Matoub-82M en deux graphes ONNX
 export_nllb_onnx.py        Export de NLLB-200 en trois graphes ONNX
