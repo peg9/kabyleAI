@@ -65,7 +65,7 @@ export ANDROID_HOME=$HOME/android-sdk
 export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
 
 yes | sdkmanager --licenses
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+sdkmanager "platform-tools" "platforms;android-35" "build-tools;34.0.0"
 ```
 
 Ensuite, dans le dossier du dépôt :
@@ -105,7 +105,7 @@ Même marche que sous Linux : installez Android Studio, ouvrez le dossier, laiss
 ```powershell
 $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 & "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" --licenses
-& "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+& "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" "platform-tools" "platforms;android-35" "build-tools;34.0.0"
 
 # Ligne aapt2 de Termux : à mettre en commentaire
 (Get-Content gradle.properties) -replace '^android.aapt2FromMavenOverride','#android.aapt2FromMavenOverride' | Set-Content gradle.properties
@@ -133,6 +133,7 @@ Configuration relevée sur le téléphone de l'auteur :
 | `aapt2` | 16.0.0.4-2 (paquet Termux `aapt2`, avec `aapt`) |
 | Outils ADB | paquet `android-tools` |
 | SDK Android | dossier `~/android-sdk`, déclaré dans `local.properties` par `sdk.dir=/data/data/com.termux/files/home/android-sdk` |
+| Contenu du SDK | `platforms/android-35`, `build-tools/34.0.0`, `platform-tools`, `licenses` |
 | `ANDROID_HOME` | non défini |
 
 Les paquets s'installent avec :
@@ -147,7 +148,7 @@ Points à connaître :
 
 - `gradle :app:assembleDebug` compile l'application. Le plugin Android 8.7.3 est documenté pour Gradle 8.9 ; la compilation a pourtant fonctionné avec Gradle 9.8.0 sur ce téléphone. Sur un PC, restez sur Gradle 8.10.2.
 - La ligne `android.aapt2FromMavenOverride` de `gradle.properties` remplace l'`aapt2` du SDK (un programme pour PC, qui ne s'exécute pas sur Android) par celui de Termux.
-- Le SDK Android n'est pas installé par un paquet Termux. Sa provenance et son contenu exact (plateforme `android-35`, `build-tools`) ne sont pas relevés ici : à compléter par l'auteur avec la sortie de `ls ~/android-sdk ~/android-sdk/platforms ~/android-sdk/build-tools`.
+- Le SDK Android n'est pas installé par un paquet Termux. Le dossier contient la plateforme 35 (le fichier `platform-35_r01.zip`, l'archive officielle du SDK, y est resté à côté du dossier décompressé `android-35`), les `build-tools` 34.0.0 et `platform-tools`. Les `build-tools` 34.0.0 sont la version par défaut du plugin Android 8.7.3 : c'est celle qu'il faut avoir, sur un PC comme sur Termux. La façon dont ces dossiers ont été obtenus n'est pas relevée ici.
 - Le script `build_install.sh` compile, installe l'APK avec `su -c "pm install -r ..."` (téléphone rooté), copie les modèles et lance l'application.
 
 Utilisation du script :
