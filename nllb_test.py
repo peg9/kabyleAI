@@ -9,9 +9,6 @@ import os
 import sys
 import time
 
-import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-
 MODEL = os.environ.get("NLLB_MODEL", "facebook/nllb-200-distilled-600M")
 
 PHRASES = [
@@ -47,25 +44,33 @@ def load_phrases():
     return PHRASES
 
 
-print(f"Chargement de {MODEL} ...", flush=True)
-start = time.time()
-tokenizer = AutoTokenizer.from_pretrained(MODEL, src_lang="fra_Latn")
-model = AutoModelForSeq2SeqLM.from_pretrained(MODEL).eval()
-print(f"Chargé en {time.time() - start:.0f} s", flush=True)
+def main():
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-target = tokenizer.convert_tokens_to_ids("kab_Latn")
-if target is None or target == tokenizer.unk_token_id:
-    sys.exit("Le code de langue kab_Latn est absent du tokenizer.")
-
-for phrase in load_phrases():
-    inputs = tokenizer(phrase, return_tensors="pt")
+    print(f"Chargement de {MODEL} ...", flush=True)
     start = time.time()
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            forced_bos_token_id=target,
-            num_beams=4,
-            max_new_tokens=128,
-        )
-    text = tokenizer.batch_decode(output, skip_special_tokens=True)[0]
-    print(f"\nFR  {phrase}\nKAB {text}\n    ({time.time() - start:.1f} s)", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, src_lang="fra_Latn")
+    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL).eval()
+    print(f"Chargé en {time.time() - start:.0f} s", flush=True)
+
+    target = tokenizer.convert_tokens_to_ids("kab_Latn")
+    if target is None or target == tokenizer.unk_token_id:
+        sys.exit("Le code de langue kab_Latn est absent du tokenizer.")
+
+    for phrase in load_phrases():
+        inputs = tokenizer(phrase, return_tensors="pt")
+        start = time.time()
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                forced_bos_token_id=target,
+                num_beams=4,
+                max_new_tokens=128,
+            )
+        text = tokenizer.batch_decode(output, skip_special_tokens=True)[0]
+        print(f"\nFR  {phrase}\nKAB {text}\n    ({time.time() - start:.1f} s)", flush=True)
+
+
+if __name__ == "__main__":
+    main()
